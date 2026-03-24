@@ -6,6 +6,7 @@ loadEnv();
 export interface AppEnv {
   serverName: string;
   mcpPort: number;
+  mcpAuthToken?: string;
   outputDir: string;
   openAiApiKey?: string;
   openAiBaseUrl: string;
@@ -22,7 +23,8 @@ export interface AppEnv {
 
 export const appEnv: AppEnv = {
   serverName: process.env.MCP_SERVER_NAME ?? "media-mcp-server",
-  mcpPort: parseInt(process.env.MCP_PORT ?? "3000", 10),
+  mcpPort: parseInt(process.env.MCP_PORT ?? "3333", 10),
+  mcpAuthToken: process.env.MCP_AUTH_TOKEN,
   outputDir: path.resolve(process.cwd(), process.env.MEDIA_OUTPUT_DIR ?? "outputs"),
   openAiApiKey: process.env.OPENAI_API_KEY,
   openAiBaseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",

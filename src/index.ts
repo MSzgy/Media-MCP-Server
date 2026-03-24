@@ -141,6 +141,22 @@ function toToolResult(payload: unknown) {
 const app = express();
 app.use(express.json());
 
+// Token Authentication Middleware for MCP endpoints
+app.use("/mcp", (req, res, next) => {
+  if (appEnv.mcpAuthToken) {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") 
+      ? authHeader.slice(7) 
+      : (req.query.token as string);
+      
+    if (!token || token !== appEnv.mcpAuthToken) {
+      res.status(401).json({ error: "Unauthorized: Invalid or missing token" });
+      return;
+    }
+  }
+  next();
+});
+
 // Track transports by session ID for session reuse
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
