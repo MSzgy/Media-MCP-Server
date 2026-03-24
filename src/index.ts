@@ -37,12 +37,13 @@ function createMcpServer() {
 
   server.tool(
     "generate_image",
-    "Generate an image from a text prompt. Available providers: 'openai' (default), 'replicate'.",
+    "Generate an image from a text prompt. Available providers: 'openai' (default), 'replicate', 'apimart'. For apimart, models include 'gpt-4o-image', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'doubao-seedance-4-5', 'doubao-seedream-5-0-lite', 'flux-2-flex', 'z-image-turbo', 'grok-imagine-1.0-apimart'.",
     {
       prompt: z.string().min(1).describe("The text prompt describing the image to generate"),
-      provider: z.string().optional().describe("The provider to use: 'openai' or 'replicate'"),
-      model: z.string().optional().describe("The model to use (for replicate, e.g., 'stability-ai/sdxl')"),
+      provider: z.string().optional().describe("The provider to use: 'openai', 'replicate', or 'apimart'"),
+      model: z.string().optional().describe("The model to use"),
       size: z.string().optional(),
+      resolution: z.string().optional().describe("Resolution for apimart models (e.g., '1K', '2K')"),
       quality: z.string().optional(),
       background: z.string().optional(),
       outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
@@ -72,13 +73,13 @@ function createMcpServer() {
 
   server.tool(
     "generate_audio",
-    "Generate audio/speech from text. Available providers: 'elevenlabs' (default).",
+    "Generate audio/speech from text. Available providers: 'elevenlabs' (default), 'apimart'. For apimart, models like 'gpt-4o-mini-tts' can be used.",
     {
       prompt: z.string().min(1).describe("The text to synthesize into speech"),
-      provider: z.string().optional().describe("The provider to use: 'elevenlabs'"),
+      provider: z.string().optional().describe("The provider to use: 'elevenlabs' or 'apimart'"),
       model: z.string().optional().describe("The TTS model to use"),
-      voiceId: z.string().optional().describe("The voice ID to use"),
-      outputFormat: z.string().optional(),
+      voiceId: z.string().optional().describe("The voice ID to use (e.g., 'alloy' for apimart)"),
+      outputFormat: z.string().optional().describe("Output format, e.g., 'mp3', 'opus'"),
       languageCode: z.string().optional(),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
@@ -93,6 +94,32 @@ function createMcpServer() {
       jobId: z.string().describe("The task/job ID returned from the generation tool")
     },
     async (args) => toToolResult(await mediaService.checkTaskStatus(args.provider, args.jobId))
+  );
+
+  server.tool(
+    "check_apimart_balance",
+    "Check the user's ApiMart account balance and quota.",
+    async () => {
+      if (!appEnv.apiMartApiKey) {
+        return toToolResult({ error: "APIMART_API_KEY is not configured." });
+      }
+      try {
+        const url = `${appEnv.apiMartBaseUrl}/user/balance`;
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${appEnv.apiMartApiKey}`
+          }
+        });
+        if (!response.ok) {
+          return toToolResult({ error: `ApiMart request failed with status ${response.status}` });
+        }
+        const data = await response.json();
+        return toToolResult(data);
+      } catch (err: any) {
+        return toToolResult({ error: err.message || "Unknown error occurred" });
+      }
+    }
   );
 
   return server;

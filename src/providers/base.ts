@@ -32,6 +32,7 @@ export interface ImageGenerationParams {
   outputFormat?: "png" | "jpeg" | "webp";
   outputCompression?: number;
   count?: number;
+  resolution?: string;
   input?: Record<string, unknown>;
 }
 
