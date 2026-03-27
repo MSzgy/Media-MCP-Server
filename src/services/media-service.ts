@@ -11,9 +11,9 @@ import {
 export class MediaService {
   private readonly providers = new Map<string, MediaProvider>();
   private readonly defaultProviders: Record<MediaCapability, string> = {
-    image: "openai",
-    video: "replicate",
-    audio: "elevenlabs"
+    image: "apimart",
+    video: "apimart",
+    audio: "apimart"
   };
 
   constructor(providers: MediaProvider[]) {

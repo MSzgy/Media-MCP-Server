@@ -61,7 +61,7 @@ export class ApiMartVideoProvider implements MediaProvider {
   readonly name = "apimart";
   readonly capabilities = ["video", "image", "audio"] as const;
 
-  constructor(private readonly env: AppEnv) {}
+  constructor(private readonly env: AppEnv) { }
 
   getAvailability(): ProviderAvailability {
     return this.env.apiMartApiKey
@@ -113,14 +113,20 @@ export class ApiMartVideoProvider implements MediaProvider {
 
       await new Promise((resolve) => setTimeout(resolve, 5000)); // poll every 5s
 
-      const pollResponse = await fetchJson<ApiMartTaskResponse>(
-        `${this.env.apiMartBaseUrl}/tasks/${taskId}`,
-        {
-          headers: {
-            "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
+      let pollResponse: ApiMartTaskResponse | undefined;
+      try {
+        pollResponse = await fetchJson<ApiMartTaskResponse>(
+          `${this.env.apiMartBaseUrl}/tasks/${taskId}`,
+          {
+            headers: {
+              "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
+            }
           }
-        }
-      );
+        );
+      } catch (pollErr: any) {
+        console.warn(`[ApiMart Polling] Warning: fetch failed for task ${taskId}:`, pollErr.message, pollErr.cause);
+        continue;
+      }
 
       taskStatus = pollResponse.data?.status ?? taskStatus;
 
@@ -190,14 +196,21 @@ export class ApiMartVideoProvider implements MediaProvider {
 
       await new Promise((resolve) => setTimeout(resolve, 5000));
 
-      const pollResponse = await fetchJson<ApiMartTaskResponse>(
-        `${this.env.apiMartBaseUrl}/tasks/${taskId}`,
-        {
-          headers: {
-            "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
+      let pollResponse: ApiMartTaskResponse | undefined;
+      try {
+        pollResponse = await fetchJson<ApiMartTaskResponse>(
+          `${this.env.apiMartBaseUrl}/tasks/${taskId}`,
+          {
+            headers: {
+              "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
+            }
           }
-        }
-      );
+        );
+      } catch (pollErr: any) {
+        console.warn(`[ApiMart Polling] Warning: fetch failed for task ${taskId}:`, pollErr.message, pollErr.cause);
+        // On network failure or 5XX, wait 5s and try again without breaking the outer loop
+        continue;
+      }
 
       taskStatus = pollResponse.data?.status ?? taskStatus;
 

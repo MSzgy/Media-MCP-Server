@@ -51,7 +51,15 @@ function createMcpServer() {
       count: z.number().int().min(1).max(4).optional(),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
-    async (args) => toToolResult(await mediaService.generateImage(args))
+    async (args) => {
+      try {
+        return toToolResult(await mediaService.generateImage(args));
+      } catch (err: any) {
+        const cause = err.cause ? ` (Cause: ${err.cause})` : "";
+        const msg = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+        return toToolResult(`Generation Failed: ${msg}${cause}`, true);
+      }
+    }
   );
 
   server.tool(
@@ -68,7 +76,14 @@ function createMcpServer() {
       waitSeconds: z.number().int().min(5).max(300).optional(),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
-    async (args) => toToolResult(await mediaService.generateVideo(args))
+    async (args) => {
+      try {
+        return toToolResult(await mediaService.generateVideo(args));
+      } catch (err: any) {
+        const msg = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+        return toToolResult(`Generation Failed: ${msg}`, true);
+      }
+    }
   );
 
   server.tool(
@@ -83,7 +98,14 @@ function createMcpServer() {
       languageCode: z.string().optional(),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
-    async (args) => toToolResult(await mediaService.generateAudio(args))
+    async (args) => {
+      try {
+        return toToolResult(await mediaService.generateAudio(args));
+      } catch (err: any) {
+        const msg = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+        return toToolResult(`Generation Failed: ${msg}`, true);
+      }
+    }
   );
 
   server.tool(
@@ -93,7 +115,15 @@ function createMcpServer() {
       provider: z.string().describe("The provider used for generation, e.g., 'apimart', 'replicate'"),
       jobId: z.string().describe("The task/job ID returned from the generation tool")
     },
-    async (args) => toToolResult(await mediaService.checkTaskStatus(args.provider, args.jobId))
+    async (args) => {
+      try {
+        return toToolResult(await mediaService.checkTaskStatus(args.provider, args.jobId));
+      } catch (err: any) {
+        const cause = err.cause ? ` (Cause: ${err.cause})` : "";
+        const msg = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+        return toToolResult(`Check Status Failed: ${msg}${cause}`, true);
+      }
+    }
   );
 
   server.tool(
@@ -125,12 +155,13 @@ function createMcpServer() {
   return server;
 }
 
-function toToolResult(payload: unknown) {
+function toToolResult(payload: unknown, isError = false) {
   return {
+    isError,
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify(payload, null, 2)
+        text: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2)
       }
     ]
   };
@@ -141,14 +172,33 @@ function toToolResult(payload: unknown) {
 const app = express();
 app.use(express.json());
 
+// Debug logging for MCP requests
+app.use("/mcp", (req, res, next) => {
+  console.log(`\n--- [MCP Request] ${req.method} ${req.originalUrl} ---`);
+  console.log("[Headers]:", JSON.stringify(req.headers, null, 2));
+  console.log("[Payload]:", JSON.stringify(req.body, null, 2));
+
+  const originalSend = res.send;
+  res.send = function (body) {
+    if (res.statusCode >= 400) {
+      console.log(`[MCP Response Error] Status: ${res.statusCode}`);
+      console.log("[Response Body]:", body);
+    } else {
+      console.log(`[MCP Response] Status: ${res.statusCode}`);
+    }
+    return originalSend.call(this, body);
+  };
+  next();
+});
+
 // Token Authentication Middleware for MCP endpoints
 app.use("/mcp", (req, res, next) => {
   if (appEnv.mcpAuthToken) {
     const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") 
-      ? authHeader.slice(7) 
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
       : (req.query.token as string);
-      
+
     if (!token || token !== appEnv.mcpAuthToken) {
       res.status(401).json({ error: "Unauthorized: Invalid or missing token" });
       return;
@@ -161,28 +211,43 @@ app.use("/mcp", (req, res, next) => {
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
 app.all("/mcp", async (req: Request, res: Response) => {
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  let transport = sessionId ? transports.get(sessionId) : undefined;
+  try {
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+    let transport = sessionId ? transports.get(sessionId) : undefined;
 
-  if (!transport) {
-    transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (id) => {
-        transports.set(id, transport!);
+    if (!transport) {
+      transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (id) => {
+          transports.set(id, transport!);
+        }
+      });
+
+      transport.onclose = () => {
+        if (transport!.sessionId) {
+          transports.delete(transport!.sessionId);
+        }
+      };
+
+      const server = createMcpServer();
+      server.server.onerror = (err) => console.error("[Server Error]:", err);
+      await server.connect(transport);
+    }
+
+    try {
+      await transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      console.error("[HandleRequest Error]:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: String(error) });
       }
-    });
-
-    transport.onclose = () => {
-      if (transport!.sessionId) {
-        transports.delete(transport!.sessionId);
-      }
-    };
-
-    const server = createMcpServer();
-    await server.connect(transport);
+    }
+  } catch (globalError) {
+    console.error("[Global Route Error]:", globalError);
+    if (!res.headersSent) {
+      res.status(500).json({ error: String(globalError), stack: (globalError as Error).stack });
+    }
   }
-
-  await transport.handleRequest(req, res, req.body);
 });
 
 // Health check
