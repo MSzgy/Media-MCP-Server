@@ -3,3 +3,5 @@ dist
 .env
 outputs
 .DS_Store
+.media-mcp-tools.json
+.media-mcp-api-keys.json

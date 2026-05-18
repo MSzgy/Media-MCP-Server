@@ -14,12 +14,11 @@ export async function saveBase64Artifact(args: {
   extension: string;
   contentType?: string;
 }): Promise<SavedArtifact> {
-  await mkdir(args.outputDir, { recursive: true });
-
-  const filePath = path.resolve(
-    args.outputDir,
-    `${args.prefix}-${randomUUID()}.${stripDot(args.extension)}`
-  );
+  const filePath = await createArtifactPath({
+    outputDir: args.outputDir,
+    prefix: args.prefix,
+    extension: args.extension
+  });
 
   await writeFile(filePath, Buffer.from(args.base64, "base64"));
 
@@ -36,12 +35,11 @@ export async function saveBinaryArtifact(args: {
   extension: string;
   contentType?: string;
 }): Promise<SavedArtifact> {
-  await mkdir(args.outputDir, { recursive: true });
-
-  const filePath = path.resolve(
-    args.outputDir,
-    `${args.prefix}-${randomUUID()}.${stripDot(args.extension)}`
-  );
+  const filePath = await createArtifactPath({
+    outputDir: args.outputDir,
+    prefix: args.prefix,
+    extension: args.extension
+  });
 
   await writeFile(filePath, args.data);
 
@@ -51,8 +49,23 @@ export async function saveBinaryArtifact(args: {
   };
 }
 
+export async function createArtifactPath(args: {
+  outputDir: string;
+  prefix: string;
+  extension: string;
+}): Promise<string> {
+  await mkdir(args.outputDir, { recursive: true });
+
+  return path.resolve(
+    args.outputDir,
+    `${args.prefix}-${randomUUID()}.${stripDot(args.extension)}`
+  );
+}
+
 export function extensionFromContentType(contentType?: string | null, fallback = "bin"): string {
-  switch (contentType) {
+  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+
+  switch (mediaType) {
     case "image/png":
       return "png";
     case "image/jpeg":
@@ -66,6 +79,8 @@ export function extensionFromContentType(contentType?: string | null, fallback =
       return "wav";
     case "audio/ogg":
       return "ogg";
+    case "video/mp4":
+      return "mp4";
     default:
       return fallback;
   }

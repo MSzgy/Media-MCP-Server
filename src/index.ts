@@ -2,17 +2,208 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import express, { Request, Response } from "express";
 import { appEnv } from "./config/env.js";
+import { ApiKeyStore } from "./config/api-keys-store.js";
+import { DefaultGoogleKeyResolver } from "./config/google-key-resolver.js";
 import { ApiMartVideoProvider } from "./providers/apimart-video-provider.js";
+import { GoogleMediaProvider } from "./providers/google-media-provider.js";
 import { MediaService } from "./services/media-service.js";
 
 // ── helpers ──────────────────────────────────────────────────────────
 
+const apiKeyStore = new ApiKeyStore(
+  appEnv.googleApiKeys ?? [],
+  appEnv.googleApiKey
+);
+const googleKeyResolver = new DefaultGoogleKeyResolver(apiKeyStore);
+
 function createMediaService() {
   return new MediaService([
-    new ApiMartVideoProvider(appEnv)
+    new ApiMartVideoProvider(appEnv),
+    new GoogleMediaProvider(appEnv, googleKeyResolver)
   ]);
+}
+
+type ToolCapability = "system" | "upload" | "image" | "video" | "audio" | "status";
+type ToolProvider = "system" | "apimart" | "google" | "multi";
+
+interface ToolCatalogEntry {
+  name: string;
+  title: string;
+  provider: ToolProvider;
+  capability: ToolCapability;
+  model?: string;
+}
+
+interface ModelCatalogEntry {
+  id: string;
+  title: string;
+  provider: "apimart" | "google";
+  capability: "image" | "video" | "audio";
+  model: string;
+  toolName?: string;
+  defaults?: Record<string, unknown>;
+}
+
+interface ToolExposureSettings {
+  enabledTools?: string[];
+  updatedAt?: string;
+}
+
+const TOOL_CATALOG: ToolCatalogEntry[] = [
+  { name: "list_media_providers", title: "List media providers", provider: "system", capability: "system" },
+  { name: "upload_apimart_image", title: "Upload ApiMart reference image", provider: "apimart", capability: "upload" },
+  { name: "generate_image_google_gemini_3_1_flash_image_preview", title: "Google Gemini 3.1 Flash Image Preview", provider: "google", capability: "image", model: "gemini-3.1-flash-image-preview" },
+  { name: "generate_image_google_gemini_3_pro_image_preview", title: "Google Gemini 3 Pro Image Preview", provider: "google", capability: "image", model: "gemini-3-pro-image-preview" },
+  { name: "generate_image_google_imagen_4_0_generate_001", title: "Google Imagen 4.0 Generate", provider: "google", capability: "image", model: "models/imagen-4.0-generate-001" },
+  { name: "generate_image_google_imagen_4_0_fast_generate_001", title: "Google Imagen 4.0 Fast", provider: "google", capability: "image", model: "models/imagen-4.0-fast-generate-001" },
+  { name: "generate_image_apimart_gemini_3_1_flash_image_preview", title: "ApiMart Gemini 3.1 Flash Image Preview", provider: "apimart", capability: "image", model: "gemini-3.1-flash-image-preview" },
+  { name: "generate_image_apimart_gemini_3_pro_image_preview", title: "ApiMart Gemini 3 Pro Image Preview", provider: "apimart", capability: "image", model: "gemini-3-pro-image-preview" },
+  { name: "generate_image_apimart_imagen_4_0_apimart", title: "ApiMart Imagen 4.0", provider: "apimart", capability: "image", model: "imagen-4.0-apimart" },
+  { name: "generate_image_apimart_gpt_image_2", title: "ApiMart GPT Image 2", provider: "apimart", capability: "image", model: "gpt-image-2" },
+  { name: "generate_image_apimart_gpt_image_2_official", title: "ApiMart GPT Image 2 Official", provider: "apimart", capability: "image", model: "gpt-image-2-official" },
+  { name: "generate_image_apimart_z_image_turbo", title: "ApiMart Z Image Turbo", provider: "apimart", capability: "image", model: "z-image-turbo" },
+  { name: "generate_image_apimart_wan2_7_image_pro", title: "ApiMart Wan2.7 Image Pro", provider: "apimart", capability: "image", model: "wan2.7-image-pro" },
+  { name: "generate_video_apimart_doubao_seedance_2_0", title: "ApiMart Doubao Seedance 2.0", provider: "apimart", capability: "video", model: "doubao-seedance-2.0" },
+  { name: "generate_video_apimart_doubao_seedance_2_0_private_avatar", title: "ApiMart Seedance Private Avatar", provider: "apimart", capability: "video", model: "doubao-seedance-2.0-private-avatar" },
+  { name: "generate_video_apimart_doubao_seedance_2_0_real_avatar", title: "ApiMart Seedance Real Avatar", provider: "apimart", capability: "video", model: "doubao-seedance-2.0-real-avatar" },
+  { name: "generate_video_apimart_sora_2", title: "ApiMart Sora 2", provider: "apimart", capability: "video", model: "sora-2" },
+  { name: "generate_video_apimart_veo3_1_fast", title: "ApiMart Veo 3.1 Fast", provider: "apimart", capability: "video", model: "veo3.1-fast" },
+  { name: "generate_video_apimart_veo3_1_fast_remix", title: "ApiMart Veo 3.1 Fast Remix", provider: "apimart", capability: "video", model: "veo3.1-fast-remix" },
+  { name: "generate_video_apimart_veo3_1_fast_official", title: "ApiMart Veo 3.1 Fast Official", provider: "apimart", capability: "video", model: "veo3.1-fast-official" },
+  { name: "generate_video_apimart_happyhorse_1_0", title: "ApiMart HappyHorse 1.0", provider: "apimart", capability: "video", model: "happyhorse-1.0" },
+  { name: "generate_video_apimart_wan2_7", title: "ApiMart Wan2.7", provider: "apimart", capability: "video", model: "wan2.7" },
+  { name: "generate_video_apimart_wan2_7_r2v", title: "ApiMart Wan2.7 R2V", provider: "apimart", capability: "video", model: "wan2.7-r2v" },
+  { name: "generate_video_apimart_wan2_7_videoedit", title: "ApiMart Wan2.7 Video Edit", provider: "apimart", capability: "video", model: "wan2.7-videoedit" },
+  { name: "generate_video_apimart_wan2_6", title: "ApiMart Wan2.6", provider: "apimart", capability: "video", model: "wan2.6" },
+  { name: "generate_video_apimart_wan2_6_i2v_flash", title: "ApiMart Wan2.6 I2V Flash", provider: "apimart", capability: "video", model: "wan2.6-i2v-flash" },
+  { name: "generate_video_apimart_kling_v2_6", title: "ApiMart Kling v2.6", provider: "apimart", capability: "video", model: "kling-v2.6" },
+  { name: "generate_video_apimart_grok_imagine_1_0_video_apimart", title: "ApiMart Grok Imagine Video", provider: "apimart", capability: "video", model: "grok-imagine-1.0-video-apimart" },
+  { name: "generate_video", title: "Generic video generator", provider: "multi", capability: "video" },
+  { name: "generate_audio", title: "Generic audio generator", provider: "multi", capability: "audio" },
+  { name: "check_task_status", title: "Check task status", provider: "multi", capability: "status" },
+  { name: "check_apimart_balance", title: "Check ApiMart balance", provider: "apimart", capability: "status" }
+];
+
+const MODEL_CATALOG: ModelCatalogEntry[] = [
+  { id: "google-image-gemini-3-1-flash", title: "Gemini 3.1 Flash Image Preview", provider: "google", capability: "image", model: "gemini-3.1-flash-image-preview", toolName: "generate_image_google_gemini_3_1_flash_image_preview", defaults: { imageSize: "1K" } },
+  { id: "google-image-gemini-3-pro", title: "Gemini 3 Pro Image Preview", provider: "google", capability: "image", model: "gemini-3-pro-image-preview", toolName: "generate_image_google_gemini_3_pro_image_preview", defaults: { imageSize: "1K" } },
+  { id: "google-image-imagen-4", title: "Imagen 4.0 Generate", provider: "google", capability: "image", model: "models/imagen-4.0-generate-001", toolName: "generate_image_google_imagen_4_0_generate_001", defaults: { aspectRatio: "1:1", imageSize: "1K", outputFormat: "jpeg", count: 1, personGeneration: "ALLOW_ADULT" } },
+  { id: "google-image-imagen-4-fast", title: "Imagen 4.0 Fast", provider: "google", capability: "image", model: "models/imagen-4.0-fast-generate-001", toolName: "generate_image_google_imagen_4_0_fast_generate_001", defaults: { aspectRatio: "1:1", outputFormat: "jpeg", count: 1, personGeneration: "ALLOW_ADULT" } },
+  { id: "apimart-image-gemini-3-1-flash", title: "Gemini 3.1 Flash Image Preview", provider: "apimart", capability: "image", model: "gemini-3.1-flash-image-preview", toolName: "generate_image_apimart_gemini_3_1_flash_image_preview" },
+  { id: "apimart-image-gemini-3-pro", title: "Gemini 3 Pro Image Preview", provider: "apimart", capability: "image", model: "gemini-3-pro-image-preview", toolName: "generate_image_apimart_gemini_3_pro_image_preview" },
+  { id: "apimart-image-imagen-4", title: "Imagen 4.0 ApiMart", provider: "apimart", capability: "image", model: "imagen-4.0-apimart", toolName: "generate_image_apimart_imagen_4_0_apimart", defaults: { count: 1 } },
+  { id: "apimart-image-gpt-image-2", title: "GPT Image 2", provider: "apimart", capability: "image", model: "gpt-image-2", toolName: "generate_image_apimart_gpt_image_2", defaults: { count: 1 } },
+  { id: "apimart-image-gpt-image-2-official", title: "GPT Image 2 Official", provider: "apimart", capability: "image", model: "gpt-image-2-official", toolName: "generate_image_apimart_gpt_image_2_official" },
+  { id: "apimart-image-z-image-turbo", title: "Z Image Turbo", provider: "apimart", capability: "image", model: "z-image-turbo", toolName: "generate_image_apimart_z_image_turbo", defaults: { count: 1 } },
+  { id: "apimart-image-wan-2-7", title: "Wan2.7 Image Pro", provider: "apimart", capability: "image", model: "wan2.7-image-pro", toolName: "generate_image_apimart_wan2_7_image_pro" },
+  { id: "google-video-veo-3-1", title: "Veo 3.1 Generate Preview", provider: "google", capability: "video", model: "veo-3.1-generate-preview", defaults: { waitSeconds: 30 } },
+  { id: "google-video-veo-3-1-fast", title: "Veo 3.1 Fast Generate Preview", provider: "google", capability: "video", model: "veo-3.1-fast-generate-preview", defaults: { waitSeconds: 30 } },
+  { id: "apimart-video-sora-2", title: "Sora 2", provider: "apimart", capability: "video", model: "sora-2", toolName: "generate_video_apimart_sora_2" },
+  { id: "apimart-video-veo-3-1-fast", title: "Veo 3.1 Fast", provider: "apimart", capability: "video", model: "veo3.1-fast", toolName: "generate_video_apimart_veo3_1_fast" },
+  { id: "apimart-video-seedance-2", title: "Doubao Seedance 2.0", provider: "apimart", capability: "video", model: "doubao-seedance-2.0", toolName: "generate_video_apimart_doubao_seedance_2_0" },
+  { id: "apimart-video-wan-2-7", title: "Wan2.7", provider: "apimart", capability: "video", model: "wan2.7", toolName: "generate_video_apimart_wan2_7" },
+  { id: "apimart-video-wan-2-6", title: "Wan2.6", provider: "apimart", capability: "video", model: "wan2.6", toolName: "generate_video_apimart_wan2_6" },
+  { id: "apimart-video-kling-2-6", title: "Kling v2.6", provider: "apimart", capability: "video", model: "kling-v2.6", toolName: "generate_video_apimart_kling_v2_6" },
+  { id: "google-audio-tts", title: "Gemini Flash TTS", provider: "google", capability: "audio", model: "gemini-3.1-flash-tts-preview", defaults: { outputFormat: "wav", voiceId: "Kore" } },
+  { id: "apimart-audio-default", title: "ApiMart TTS", provider: "apimart", capability: "audio", model: "default" }
+];
+
+const TOOL_CATALOG_NAMES = new Set(TOOL_CATALOG.map((tool) => tool.name));
+const TOOL_SETTINGS_PATH = path.resolve(
+  process.cwd(),
+  process.env.MCP_TOOL_SETTINGS_PATH ?? ".media-mcp-tools.json"
+);
+
+function parseCsvEnv(value: string | undefined): string[] | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function readToolExposureSettings(): ToolExposureSettings {
+  if (!existsSync(TOOL_SETTINGS_PATH)) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(readFileSync(TOOL_SETTINGS_PATH, "utf8")) as ToolExposureSettings;
+  } catch (err) {
+    console.warn(`[Tool Settings] Failed to read ${TOOL_SETTINGS_PATH}:`, err);
+    return {};
+  }
+}
+
+function writeToolExposureSettings(enabledTools: string[]): ToolExposureSettings {
+  const uniqueEnabledTools = Array.from(new Set(enabledTools))
+    .filter((name) => TOOL_CATALOG_NAMES.has(name))
+    .sort();
+  const settings: ToolExposureSettings = {
+    enabledTools: uniqueEnabledTools,
+    updatedAt: new Date().toISOString()
+  };
+  mkdirSync(path.dirname(TOOL_SETTINGS_PATH), { recursive: true });
+  writeFileSync(TOOL_SETTINGS_PATH, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  return settings;
+}
+
+function resolveEnabledToolNames(): Set<string> {
+  const allToolNames = TOOL_CATALOG.map((tool) => tool.name);
+  const envEnabledTools = parseCsvEnv(process.env.MCP_EXPOSED_TOOLS);
+  const disabledTools = new Set(parseCsvEnv(process.env.MCP_DISABLED_TOOLS) ?? []);
+
+  const selectedTools = envEnabledTools
+    ? envEnabledTools.some((name) => name === "*" || name.toLowerCase() === "all")
+      ? allToolNames
+      : envEnabledTools
+    : Array.isArray(readToolExposureSettings().enabledTools)
+      ? readToolExposureSettings().enabledTools!
+      : allToolNames;
+
+  return new Set(
+    selectedTools
+      .filter((name) => TOOL_CATALOG_NAMES.has(name))
+      .filter((name) => !disabledTools.has(name))
+  );
+}
+
+function isToolExposureLockedByEnv(): boolean {
+  return Boolean(parseCsvEnv(process.env.MCP_EXPOSED_TOOLS));
+}
+
+function getToolExposurePayload() {
+  const enabledToolNames = resolveEnabledToolNames();
+  const tools = TOOL_CATALOG.map((tool) => ({
+    ...tool,
+    enabled: enabledToolNames.has(tool.name)
+  }));
+  return {
+    lockedByEnv: isToolExposureLockedByEnv(),
+    settingsPath: TOOL_SETTINGS_PATH,
+    enabledCount: tools.filter((tool) => tool.enabled).length,
+    totalCount: tools.length,
+    enabledTools: tools.filter((tool) => tool.enabled).map((tool) => tool.name),
+    tools
+  };
+}
+
+type UnknownToolMethod = (name: string, ...args: unknown[]) => unknown;
+
+function applyToolExposureFilter(server: McpServer, enabledToolNames: Set<string>) {
+  const originalTool = (server.tool as unknown as UnknownToolMethod).bind(server);
+  (server as unknown as { tool: UnknownToolMethod }).tool = (name: string, ...args: unknown[]) => {
+    if (TOOL_CATALOG_NAMES.has(name) && !enabledToolNames.has(name)) {
+      return undefined;
+    }
+    return originalTool(name, ...args);
+  };
 }
 
 const apiMartImageFields = {
@@ -79,6 +270,72 @@ function createApiMartImageHandler(mediaService: MediaService, model: string) {
         provider: "apimart",
         model,
         ...args
+      }));
+    } catch (err: any) {
+      const cause = err.cause ? ` (Cause: ${err.cause})` : "";
+      const msg = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+      return toToolResult(`Generation Failed: ${msg}${cause}`, true);
+    }
+  };
+}
+
+const googleImageFields = {
+  prompt: z.string().min(1).describe("Required text prompt for the Google image model."),
+  aspectRatio: z.enum(["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"]).optional().describe("Output aspect ratio. Gemini image models also support '21:9'. Imagen supports common ratios such as '1:1', '3:4', '4:3', '9:16', and '16:9'."),
+  imageSize: z.enum(["1K", "2K", "4K"]).optional().describe("Google image size tier. Gemini image models support '1K', '2K', and '4K'. Imagen 4.0 generate defaults to '1K'; Imagen fast may ignore this."),
+  personGeneration: z.enum(["ALLOW_ADULT", "ALLOW_ALL", "ALLOW_NONE", "DONT_ALLOW"]).optional().describe("Google person generation policy. For Imagen this is mapped to the official PersonGeneration enum; for Gemini it is sent through imageConfig."),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).optional().describe("Preferred output format when supported. Imagen defaults to JPEG."),
+  outputCompression: z.number().int().min(0).max(100).optional().describe("Imagen JPEG/WebP compression quality from 0 to 100 when supported."),
+  count: z.number().int().min(1).max(4).optional().describe("Requested image count or Gemini candidate count when supported."),
+  input: z.record(z.unknown()).optional().describe("Escape hatch for Google SDK options. You can pass config, imageConfig, aspectRatio, imageSize, or personGeneration.")
+};
+
+function pickGoogleImageFields<T extends keyof typeof googleImageFields>(fields: readonly T[]) {
+  return Object.fromEntries(fields.map((field) => [field, googleImageFields[field]])) as Pick<typeof googleImageFields, T>;
+}
+
+function createGoogleImageHandler(
+  mediaService: MediaService,
+  model: string,
+  defaults: {
+    aspectRatio?: string;
+    imageSize?: string;
+    personGeneration?: string;
+    outputFormat?: "png" | "jpeg" | "webp";
+    count?: number;
+  } = {}
+) {
+  return async (args: {
+    prompt: string;
+    aspectRatio?: string;
+    imageSize?: string;
+    personGeneration?: string;
+    outputFormat?: "png" | "jpeg" | "webp";
+    outputCompression?: number;
+    count?: number;
+    input?: Record<string, unknown>;
+  }) => {
+    try {
+      const aspectRatio = args.aspectRatio ?? defaults.aspectRatio;
+      const imageSize = args.imageSize ?? defaults.imageSize;
+      const personGeneration = args.personGeneration ?? defaults.personGeneration;
+      return toToolResult(await mediaService.generateImage({
+        provider: "google",
+        model,
+        prompt: args.prompt,
+        size: aspectRatio,
+        resolution: imageSize,
+        outputFormat: args.outputFormat ?? defaults.outputFormat,
+        outputCompression: args.outputCompression,
+        count: args.count ?? defaults.count,
+        input: {
+          ...(args.input ?? {}),
+          ...compactObject({
+            aspectRatio,
+            imageSize,
+            personGeneration
+          })
+        }
       }));
     } catch (err: any) {
       const cause = err.cause ? ` (Cause: ${err.cause})` : "";
@@ -162,11 +419,18 @@ function createApiMartVideoHandler(mediaService: MediaService, model: string, de
   };
 }
 
+function compactObject<T extends Record<string, unknown>>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
+  ) as Partial<T>;
+}
+
 function createMcpServer() {
   const server = new McpServer({
     name: appEnv.serverName,
     version: "0.1.0"
   });
+  applyToolExposureFilter(server, resolveEnabledToolNames());
 
   const mediaService = createMediaService();
 
@@ -192,6 +456,81 @@ function createMcpServer() {
         return toToolResult(`Upload Failed: ${msg}${cause}`, true);
       }
     }
+  );
+
+  server.tool(
+    "generate_image_google_gemini_3_1_flash_image_preview",
+    "Generate an image with Google's official @google/genai SDK model gemini-3.1-flash-image-preview. Uses models.generateContentStream with IMAGE and TEXT response modalities, and ThinkingLevel.MINIMAL by default.",
+    pickGoogleImageFields([
+      "prompt",
+      "aspectRatio",
+      "imageSize",
+      "personGeneration",
+      "count",
+      "input"
+    ]),
+    createGoogleImageHandler(mediaService, "gemini-3.1-flash-image-preview", {
+      imageSize: "1K"
+    })
+  );
+
+  server.tool(
+    "generate_image_google_gemini_3_pro_image_preview",
+    "Generate an image with Google's official @google/genai SDK model gemini-3-pro-image-preview. Uses models.generateContentStream with IMAGE and TEXT response modalities.",
+    pickGoogleImageFields([
+      "prompt",
+      "aspectRatio",
+      "imageSize",
+      "personGeneration",
+      "count",
+      "input"
+    ]),
+    createGoogleImageHandler(mediaService, "gemini-3-pro-image-preview", {
+      imageSize: "1K"
+    })
+  );
+
+  server.tool(
+    "generate_image_google_imagen_4_0_generate_001",
+    "Generate an image with Google's official @google/genai SDK model models/imagen-4.0-generate-001. Uses models.generateImages.",
+    pickGoogleImageFields([
+      "prompt",
+      "aspectRatio",
+      "imageSize",
+      "personGeneration",
+      "outputFormat",
+      "outputCompression",
+      "count",
+      "input"
+    ]),
+    createGoogleImageHandler(mediaService, "models/imagen-4.0-generate-001", {
+      aspectRatio: "1:1",
+      imageSize: "1K",
+      personGeneration: "ALLOW_ADULT",
+      outputFormat: "jpeg",
+      count: 1
+    })
+  );
+
+  server.tool(
+    "generate_image_google_imagen_4_0_fast_generate_001",
+    "Generate an image with Google's official @google/genai SDK model models/imagen-4.0-fast-generate-001. Uses models.generateImages.",
+    pickGoogleImageFields([
+      "prompt",
+      "aspectRatio",
+      "imageSize",
+      "personGeneration",
+      "outputFormat",
+      "outputCompression",
+      "count",
+      "input"
+    ]),
+    createGoogleImageHandler(mediaService, "models/imagen-4.0-fast-generate-001", {
+      aspectRatio: "1:1",
+      personGeneration: "ALLOW_ADULT",
+      outputFormat: "jpeg",
+      count: 1
+    })
   );
 
   server.tool(
@@ -619,16 +958,16 @@ function createMcpServer() {
 
   server.tool(
     "generate_video",
-    "Generate a video from a text prompt and optionally an image with ApiMart. Prefer the per-model generate_video_apimart_<model> tools for clearer parameters.",
+    "Generate a video from a text prompt and optionally an image. Available providers: 'apimart' and 'google'. Prefer the per-model generate_video_apimart_<model> tools for ApiMart. For google, Veo models include 'veo-3.1-generate-preview' and 'veo-3.1-fast-generate-preview'.",
     {
       prompt: z.string().min(1).describe("The text prompt describing the video"),
-      provider: z.string().optional().describe("The provider to use. Only 'apimart' is configured."),
+      provider: z.string().optional().describe("The provider to use: 'apimart' or 'google'."),
       model: z.string().optional().describe("The model to use. For apimart, you can pass 'sora-2', 'veo3.1-fast', etc."),
       version: z.string().optional(),
       image: z.string().optional().describe("URL of an initial image to animate (supported by some models)"),
       aspectRatio: z.string().optional().describe("Aspect ratio, e.g., '16:9', '9:16'"),
       duration: z.number().positive().optional().describe("Duration of the video in seconds"),
-      waitSeconds: z.number().int().min(5).max(300).optional(),
+      waitSeconds: z.number().int().min(5).max(600).optional(),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
     async (args) => {
@@ -643,13 +982,13 @@ function createMcpServer() {
 
   server.tool(
     "generate_audio",
-    "Generate audio/speech from text with ApiMart. Models like 'gpt-4o-mini-tts' can be used.",
+    "Generate audio/speech from text. Available providers: 'apimart' and 'google'. For google, TTS models include 'gemini-3.1-flash-tts-preview'; voiceId maps to Google's prebuilt voice name, for example 'Kore' or 'Puck'.",
     {
       prompt: z.string().min(1).describe("The text to synthesize into speech"),
-      provider: z.string().optional().describe("The provider to use. Only 'apimart' is configured."),
+      provider: z.string().optional().describe("The provider to use: 'apimart' or 'google'."),
       model: z.string().optional().describe("The TTS model to use"),
       voiceId: z.string().optional().describe("The voice ID to use (e.g., 'alloy' for apimart)"),
-      outputFormat: z.string().optional().describe("Output format, e.g., 'mp3', 'opus'"),
+      outputFormat: z.string().optional().describe("Output format, e.g., 'mp3', 'opus'. For google, use 'wav' (default) or 'pcm'."),
       languageCode: z.string().optional(),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
@@ -667,7 +1006,7 @@ function createMcpServer() {
     "check_task_status",
     "Check the status of a long-running media generation task using its job ID.",
     {
-      provider: z.string().describe("The provider used for generation. Only 'apimart' is configured."),
+      provider: z.string().describe("The provider used for generation, e.g., 'apimart' or 'google'."),
       jobId: z.string().describe("The task/job ID returned from the generation tool")
     },
     async (args) => {
@@ -726,6 +1065,248 @@ function toToolResult(payload: unknown, isError = false) {
 
 const app = express();
 app.use(express.json());
+
+const publicDir = path.resolve(process.cwd(), "public");
+
+const uiGenerateSchema = z.object({
+  capability: z.enum(["image", "video", "audio"]),
+  provider: z.enum(["apimart", "google"]),
+  model: z.string().optional(),
+  prompt: z.string().min(1),
+  aspectRatio: z.string().optional(),
+  size: z.string().optional(),
+  resolution: z.string().optional(),
+  imageSize: z.string().optional(),
+  count: z.number().int().min(1).max(12).optional(),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
+  outputCompression: z.number().int().min(0).max(100).optional(),
+  personGeneration: z.string().optional(),
+  duration: z.number().positive().optional(),
+  image: z.string().optional(),
+  imageUrls: z.array(z.string()).optional(),
+  voiceId: z.string().optional(),
+  outputFormatAudio: z.string().optional(),
+  waitSeconds: z.number().int().min(0).max(600).optional(),
+  input: z.record(z.unknown()).optional()
+});
+
+const toolSettingsSchema = z.object({
+  enabledTools: z.array(z.string())
+});
+
+const apiKeyEntrySchema = z.object({
+  id: z.string().optional(),
+  label: z.string().min(1).max(64),
+  rawKey: z.string().optional(),
+  enabled: z.boolean()
+});
+
+const apiKeysSettingsSchema = z.object({
+  keys: z.array(apiKeyEntrySchema),
+  selectionMode: z.enum(["manual", "round-robin"]),
+  activeKeyId: z.string().nullable().optional()
+});
+
+function readApiToken(req: Request): string | undefined {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.slice(7);
+  }
+  return typeof req.query.token === "string" ? req.query.token : undefined;
+}
+
+function requireApiAuth(req: Request, res: Response, next: () => void) {
+  if (!appEnv.mcpAuthToken) {
+    next();
+    return;
+  }
+
+  if (readApiToken(req) !== appEnv.mcpAuthToken) {
+    res.status(401).json({ error: "Unauthorized: Invalid or missing token" });
+    return;
+  }
+
+  next();
+}
+
+function withPublicAssetUrls(result: unknown) {
+  if (!result || typeof result !== "object") {
+    return result;
+  }
+
+  const mediaResult = result as { assets?: Array<Record<string, unknown>> };
+  return {
+    ...mediaResult,
+    assets: (mediaResult.assets ?? []).map((asset) => ({
+      ...asset,
+      publicUrl: typeof asset.path === "string" ? publicUrlForArtifact(asset.path) : asset.url
+    }))
+  };
+}
+
+function publicUrlForArtifact(filePath: string): string | undefined {
+  const relativePath = path.relative(appEnv.outputDir, filePath);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return undefined;
+  }
+  return `/outputs/${relativePath.split(path.sep).map(encodeURIComponent).join("/")}`;
+}
+
+async function generateFromUiRequest(body: z.infer<typeof uiGenerateSchema>) {
+  const mediaService = createMediaService();
+  const input = body.input ?? {};
+
+  if (body.capability === "image") {
+    const googleInput = body.provider === "google"
+      ? compactObject({
+        aspectRatio: body.aspectRatio,
+        imageSize: body.imageSize,
+        personGeneration: body.personGeneration
+      })
+      : {};
+    return mediaService.generateImage({
+      provider: body.provider,
+      model: body.model,
+      prompt: body.prompt,
+      size: body.aspectRatio ?? body.size,
+      resolution: body.imageSize ?? body.resolution,
+      count: body.count,
+      outputFormat: body.outputFormat,
+      outputCompression: body.outputCompression,
+      imageUrls: body.imageUrls,
+      input: {
+        ...input,
+        ...googleInput
+      }
+    });
+  }
+
+  if (body.capability === "video") {
+    return mediaService.generateVideo({
+      provider: body.provider,
+      model: body.model,
+      prompt: body.prompt,
+      aspectRatio: body.aspectRatio,
+      size: body.size,
+      resolution: body.resolution,
+      duration: body.duration,
+      image: body.image,
+      imageUrls: body.imageUrls,
+      waitSeconds: body.waitSeconds,
+      input
+    });
+  }
+
+  return mediaService.generateAudio({
+    provider: body.provider,
+    model: body.model === "default" ? undefined : body.model,
+    prompt: body.prompt,
+    voiceId: body.voiceId,
+    outputFormat: body.outputFormatAudio,
+    input
+  });
+}
+
+app.get("/", (_req: Request, res: Response) => {
+  res.redirect("/ui");
+});
+
+app.get("/ui", (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.use("/ui", express.static(publicDir));
+app.use("/outputs", express.static(appEnv.outputDir));
+
+app.get("/api/auth-required", (_req: Request, res: Response) => {
+  res.json({ authRequired: Boolean(appEnv.mcpAuthToken) });
+});
+
+app.use("/api", requireApiAuth);
+
+app.get("/api/status", (_req: Request, res: Response) => {
+  res.json({
+    status: "ok",
+    mcpUrl: `http://localhost:${appEnv.mcpPort}/mcp`,
+    uiUrl: `http://localhost:${appEnv.mcpPort}/ui`,
+    providers: createMediaService().listProviders(),
+    toolExposure: getToolExposurePayload(),
+    apiKeys: apiKeyStore.getPayload()
+  });
+});
+
+app.get("/api/models", (_req: Request, res: Response) => {
+  res.json({
+    models: MODEL_CATALOG,
+    providers: createMediaService().listProviders()
+  });
+});
+
+app.get("/api/tool-settings", (_req: Request, res: Response) => {
+  res.json(getToolExposurePayload());
+});
+
+app.post("/api/tool-settings", (req: Request, res: Response) => {
+  if (isToolExposureLockedByEnv()) {
+    res.status(409).json({
+      error: "Tool exposure is locked by MCP_EXPOSED_TOOLS. Remove the env override to edit from UI."
+    });
+    return;
+  }
+
+  const parsed = toolSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  writeToolExposureSettings(parsed.data.enabledTools);
+  res.json(getToolExposurePayload());
+});
+
+app.get("/api/api-keys", (_req: Request, res: Response) => {
+  res.json(apiKeyStore.getPayload());
+});
+
+app.post("/api/api-keys", (req: Request, res: Response) => {
+  if (apiKeyStore.lockedByEnv) {
+    res.status(409).json({
+      error: "API keys are locked by GOOGLE_API_KEYS env var. Remove the env override to edit from UI."
+    });
+    return;
+  }
+
+  const parsed = apiKeysSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const { keys, selectionMode, activeKeyId } = parsed.data;
+    apiKeyStore.saveSettings(keys, selectionMode, activeKeyId ?? undefined);
+    res.json(apiKeyStore.getPayload());
+  } catch (err: any) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+app.post("/api/generate", async (req: Request, res: Response) => {
+  const parsed = uiGenerateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    const result = await generateFromUiRequest(parsed.data);
+    res.json(withPublicAssetUrls(result));
+  } catch (err: any) {
+    const cause = err.cause ? ` (Cause: ${err.cause})` : "";
+    const message = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+    res.status(500).json({ error: `${message}${cause}` });
+  }
+});
 
 // Debug logging for MCP requests
 app.use("/mcp", (req, res, next) => {

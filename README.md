@@ -5,10 +5,15 @@
 当前内置的 provider：
 
 - `apimart`：图片/视频/音频生成
+- `google`：通过 Google 官方 `@google/genai` SDK 调用 Gemini/Nano Banana 图片、Veo 视频、Gemini TTS 音频
 
 ## 工具列表
 
 - `list_media_providers`
+- `generate_image_google_gemini_3_1_flash_image_preview`
+- `generate_image_google_gemini_3_pro_image_preview`
+- `generate_image_google_imagen_4_0_generate_001`
+- `generate_image_google_imagen_4_0_fast_generate_001`
 - `generate_image_apimart_gemini_3_1_flash_image_preview`
 - `generate_image_apimart_gemini_3_pro_image_preview`
 - `generate_image_apimart_imagen_4_0_apimart`
@@ -35,6 +40,30 @@
 - `generate_audio`
 - `check_task_status`
 - `check_apimart_balance`
+
+## 本地 UI 控制台
+
+启动服务后打开：
+
+- `http://localhost:3333/ui`
+
+如果设置了 `MCP_AUTH_TOKEN`，UI 会要求填写同一个 token，也可以用 `http://localhost:3333/ui?token=...` 打开。
+
+UI 支持两类操作：
+
+| 区域 | 作用 |
+| --- | --- |
+| `Generate` | 直接选择 provider / model 调用图片、视频、音频生成。生成的本地文件会通过 `/outputs/...` 预览。 |
+| `Tool Exposure` | 勾选哪些 MCP tools 暴露给客户端。保存后会写入 `.media-mcp-tools.json`；客户端需要重新连接 MCP 才会刷新工具 schema。 |
+
+工具暴露配置：
+
+| 配置 | 说明 |
+| --- | --- |
+| `.media-mcp-tools.json` | UI 保存的启用工具列表。默认被 `.gitignore` 忽略。 |
+| `MCP_TOOL_SETTINGS_PATH` | 可选。自定义 UI 保存工具配置的路径。默认 `.media-mcp-tools.json`。 |
+| `MCP_EXPOSED_TOOLS` | 可选。逗号分隔 allowlist；设置后 UI 编辑会锁定。支持 `*` 或 `all` 表示全部。 |
+| `MCP_DISABLED_TOOLS` | 可选。逗号分隔 denylist，会在 UI/env allowlist 之后再过滤。 |
 
 ## Reference 图片上传
 
@@ -69,7 +98,31 @@
 
 ## 图片工具参数
 
-图片工具命名遵循 `generate_<capability>_<provider>_<model>`。所有图片工具都会固定写入对应 ApiMart `model`，调用方不需要再传模型名。
+图片工具命名遵循 `generate_<capability>_<provider>_<model>`。按模型拆分的工具会固定写入对应模型，调用方不需要再传模型名。
+
+Google 官方 SDK 图片工具：
+
+| 工具 | SDK 调用 | 固定模型 | 默认值 |
+| --- | --- | --- | --- |
+| `generate_image_google_gemini_3_1_flash_image_preview` | `models.generateContentStream` | `gemini-3.1-flash-image-preview` | `imageSize=1K`，`ThinkingLevel.MINIMAL` |
+| `generate_image_google_gemini_3_pro_image_preview` | `models.generateContentStream` | `gemini-3-pro-image-preview` | `imageSize=1K` |
+| `generate_image_google_imagen_4_0_generate_001` | `models.generateImages` | `models/imagen-4.0-generate-001` | `count=1`，`outputFormat=jpeg`，`personGeneration=ALLOW_ADULT`，`aspectRatio=1:1`，`imageSize=1K` |
+| `generate_image_google_imagen_4_0_fast_generate_001` | `models.generateImages` | `models/imagen-4.0-fast-generate-001` | `count=1`，`outputFormat=jpeg`，`personGeneration=ALLOW_ADULT`，`aspectRatio=1:1` |
+
+Google 图片工具常用参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `prompt` | 必填。生图提示词。 |
+| `aspectRatio` | 画幅，如 `1:1`、`16:9`、`9:16`。Gemini 还支持 `21:9`。 |
+| `imageSize` | 图片尺寸档位，如 `1K`、`2K`、`4K`。 |
+| `personGeneration` | 人像生成策略：`ALLOW_ADULT`、`ALLOW_ALL`、`ALLOW_NONE`、`DONT_ALLOW`。 |
+| `outputFormat` | Imagen 输出格式：`png`、`jpeg`、`webp`。默认 `jpeg`。 |
+| `outputCompression` | Imagen 压缩质量，0-100。 |
+| `count` | 输出数量或 Gemini candidate 数，默认 1。 |
+| `input` | 透传 Google SDK 配置，可传 `config`、`imageConfig` 等。 |
+
+ApiMart 图片工具：
 
 通用参数：
 
@@ -249,6 +302,44 @@ http://<server-host>:3333/mcp
 
 - `APIMART_API_KEY`
 - `APIMART_BASE_URL`，可选，默认 `https://api.apimart.ai/v1`
+- `GOOGLE_API_KEY`（或 `GEMINI_API_KEY`）
+
+Google provider 默认模型：
+
+- 图片：`GOOGLE_IMAGE_MODEL=gemini-3.1-flash-image-preview`
+- 视频：`GOOGLE_VIDEO_MODEL=veo-3.1-generate-preview`
+- 音频：`GOOGLE_TTS_MODEL=gemini-3.1-flash-tts-preview`
+- 语音：`GOOGLE_TTS_VOICE=Kore`
+
+调用示例：
+
+```json
+{
+  "provider": "google",
+  "prompt": "A cinematic product photo of a matte black espresso machine",
+  "size": "16:9",
+  "resolution": "2K"
+}
+```
+
+```json
+{
+  "provider": "google",
+  "prompt": "A slow dolly shot of a glass greenhouse in rain",
+  "aspectRatio": "16:9",
+  "duration": 8,
+  "waitSeconds": 120
+}
+```
+
+```json
+{
+  "provider": "google",
+  "prompt": "Say in a calm studio voice: welcome to the media generation server.",
+  "voiceId": "Kore",
+  "outputFormat": "wav"
+}
+```
 
 ## MCP 客户端配置示例
 
@@ -261,7 +352,8 @@ http://<server-host>:3333/mcp
         "/Users/zouguoyang/Media-MCP-Server/dist/index.js"
       ],
       "env": {
-        "APIMART_API_KEY": "your-key"
+        "APIMART_API_KEY": "your-apimart-key",
+        "GOOGLE_API_KEY": "your-google-api-key"
       }
     }
   }

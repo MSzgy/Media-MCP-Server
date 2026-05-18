@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Media MCP Console</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Media MCP Console</h1>
+          <p id="serverStatus">Connecting</p>
+        </div>
+        <form class="auth-box" id="authForm">
+          <input id="adminToken" type="password" autocomplete="off" placeholder="MCP token" />
+          <button id="saveToken" type="button">Connect</button>
+        </form>
+      </header>
+
+      <nav class="tabs" aria-label="Console sections">
+        <button class="tab is-active" type="button" data-tab="generate">Generate</button>
+        <button class="tab" type="button" data-tab="tools">Tool Exposure</button>
+        <button class="tab" type="button" data-tab="apiKeys">API Keys</button>
+      </nav>
+
+      <section id="generatePanel" class="panel is-active">
+        <div class="workbench">
+          <form id="generateForm" class="control-panel">
+            <div class="field-row">
+              <label>
+                Capability
+                <select id="capability">
+                  <option value="image">Image</option>
+                  <option value="video">Video</option>
+                  <option value="audio">Audio</option>
+                </select>
+              </label>
+              <label>
+                Model
+                <select id="modelSelect"></select>
+              </label>
+            </div>
+
+            <label>
+              Prompt
+              <textarea id="prompt" rows="7" placeholder="Describe the media to generate"></textarea>
+            </label>
+
+            <div class="field-grid" id="imageFields">
+              <label>
+                Aspect
+                <select id="aspectRatio">
+                  <option value="">Default</option>
+                  <option>1:1</option>
+                  <option>16:9</option>
+                  <option>9:16</option>
+                  <option>4:3</option>
+                  <option>3:4</option>
+                  <option>3:2</option>
+                  <option>2:3</option>
+                  <option>21:9</option>
+                </select>
+              </label>
+              <label>
+                Image Size
+                <select id="imageSize">
+                  <option value="">Default</option>
+                  <option>1K</option>
+                  <option>2K</option>
+                  <option>4K</option>
+                </select>
+              </label>
+              <label>
+                Format
+                <select id="outputFormat">
+                  <option value="">Default</option>
+                  <option value="jpeg">JPEG</option>
+                  <option value="png">PNG</option>
+                  <option value="webp">WebP</option>
+                </select>
+              </label>
+              <label>
+                Count
+                <input id="count" type="number" min="1" max="12" placeholder="1" />
+              </label>
+              <label>
+                Person
+                <select id="personGeneration">
+                  <option value="">Default</option>
+                  <option>ALLOW_ADULT</option>
+                  <option>ALLOW_ALL</option>
+                  <option>ALLOW_NONE</option>
+                  <option>DONT_ALLOW</option>
+                </select>
+              </label>
+              <label>
+                Compression
+                <input id="outputCompression" type="number" min="0" max="100" placeholder="0-100" />
+              </label>
+            </div>
+
+            <div class="field-grid is-hidden" id="videoFields">
+              <label>
+                Aspect
+                <input id="videoAspectRatio" placeholder="16:9" />
+              </label>
+              <label>
+                Resolution
+                <input id="resolution" placeholder="720p / 1080p / 1K" />
+              </label>
+              <label>
+                Duration
+                <input id="duration" type="number" min="1" placeholder="8" />
+              </label>
+              <label>
+                Wait Seconds
+                <input id="waitSeconds" type="number" min="0" max="600" placeholder="30" />
+              </label>
+              <label class="span-2">
+                Reference Image
+                <input id="referenceImage" placeholder="https://... or local file path for Google" />
+              </label>
+            </div>
+
+            <div class="field-grid is-hidden" id="audioFields">
+              <label>
+                Voice
+                <input id="voiceId" placeholder="Kore" />
+              </label>
+              <label>
+                Format
+                <input id="outputFormatAudio" placeholder="wav / pcm / mp3" />
+              </label>
+            </div>
+
+            <label>
+              Advanced JSON
+              <textarea id="advancedInput" rows="5" spellcheck="false" placeholder='{"negativePrompt":"low quality"}'></textarea>
+            </label>
+
+            <div class="actions">
+              <button id="runButton" type="submit">Run</button>
+              <span id="runStatus"></span>
+            </div>
+          </form>
+
+          <section class="result-panel" aria-live="polite">
+            <div class="result-head">
+              <h2>Result</h2>
+              <button id="clearResult" type="button">Clear</button>
+            </div>
+            <div id="assetGrid" class="asset-grid"></div>
+            <pre id="resultJson">{}</pre>
+          </section>
+        </div>
+      </section>
+
+      <section id="toolsPanel" class="panel">
+        <div class="tool-toolbar">
+          <div>
+            <h2>MCP Tool Exposure</h2>
+            <p id="toolStats">Loading</p>
+          </div>
+          <div class="tool-actions">
+            <input id="toolSearch" placeholder="Search tools" />
+            <select id="toolFilter">
+              <option value="all">All</option>
+              <option value="image">Image</option>
+              <option value="video">Video</option>
+              <option value="audio">Audio</option>
+              <option value="status">Status</option>
+              <option value="system">System</option>
+            </select>
+            <button id="enableVisible" type="button">Enable</button>
+            <button id="disableVisible" type="button">Disable</button>
+            <button id="saveTools" type="button">Save</button>
+          </div>
+        </div>
+        <div id="toolNotice" class="notice"></div>
+        <div id="toolList" class="tool-list"></div>
+      </section>
+
+      <section id="apiKeysPanel" class="panel">
+        <div class="tool-toolbar">
+          <div>
+            <h2>Google API Keys</h2>
+            <p id="apiKeysStats">Loading</p>
+          </div>
+          <div class="tool-actions">
+            <select id="keySelectionMode">
+              <option value="manual">Manual</option>
+              <option value="round-robin">Round-Robin</option>
+            </select>
+            <button id="addApiKey" type="button">Add Key</button>
+            <button id="saveApiKeys" type="button">Save</button>
+          </div>
+        </div>
+        <div id="apiKeysNotice" class="notice"></div>
+        <div id="apiKeyList" class="tool-list"></div>
+        <div id="apiKeyForm" class="key-form is-hidden">
+          <input id="newKeyLabel" placeholder="Key label (e.g. Production)" autocomplete="off" />
+          <input id="newKeyValue" type="password" placeholder="Paste Google API key" autocomplete="off" />
+          <button id="submitKeyForm" type="button">Add</button>
+          <button id="cancelKeyForm" type="button">Cancel</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="/ui/app.js" type="module"></script>
+  </body>
+</html>
