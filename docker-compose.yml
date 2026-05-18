@@ -1,0 +1,20 @@
+services:
+  media-mcp-server:
+    build:
+      context: .
+    image: media-mcp-server:local
+    ports:
+      - "${HOST_PORT:-3333}:3333"
+    environment:
+      MCP_SERVER_NAME: "${MCP_SERVER_NAME:-media-mcp-server}"
+      MCP_PORT: "3333"
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN}"
+      MEDIA_OUTPUT_DIR: "/app/outputs"
+      APIMART_API_KEY: "${APIMART_API_KEY}"
+      APIMART_BASE_URL: "${APIMART_BASE_URL:-https://api.apimart.ai/v1}"
+    volumes:
+      - media_outputs:/app/outputs
+    restart: unless-stopped
+
+volumes:
+  media_outputs:

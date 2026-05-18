@@ -5,7 +5,7 @@
 系统分为三层：
 
 1. MCP Tool Layer
-   - 对外暴露 `list_media_providers`、`generate_image`、`generate_video`、`generate_audio`
+   - 对外暴露 `list_media_providers`、多个独立图片模型工具、`generate_video`、`generate_audio`
    - 负责参数校验与结果序列化
 2. Media Service Layer
    - 负责默认 provider 选择
@@ -17,21 +17,11 @@
 
 ## Provider 策略
 
-- `openai`
-  - 能力：`image`
-  - 走 OpenAI Image API
-  - 结果保存为本地图片文件
-
-- `replicate`
-  - 能力：`image`, `video`
-  - 走 Replicate Prediction API
-  - 支持官方模型路径或 version 模式
-  - 长任务保留任务 ID 与轮询地址
-
-- `elevenlabs`
-  - 能力：`audio`
-  - 走 ElevenLabs Text-to-Speech API
-  - 返回本地音频文件路径
+- `apimart`
+  - 能力：`image`, `video`, `audio`
+  - 图片工具按模型拆分，命名为 `generate_<capability>_<provider>_<model>`，便于后续接入官方 API 时区分来源
+  - 视频和图片长任务保留任务 ID，并可通过任务状态工具查询
+  - 音频结果保存为本地音频文件
 
 ## 标准化返回结构
 
@@ -39,16 +29,15 @@
 
 ```json
 {
-  "provider": "openai",
+  "provider": "apimart",
   "capability": "image",
-  "model": "gpt-image-1.5",
-  "status": "completed",
-  "jobId": "optional",
+  "model": "gemini-3.1-flash-image-preview",
+  "status": "submitted",
+  "jobId": "task_...",
   "assets": [
     {
-      "kind": "file",
-      "path": "/absolute/path/to/output.png",
-      "contentType": "image/png"
+      "kind": "url",
+      "url": "https://..."
     }
   ],
   "metadata": {}
@@ -65,6 +54,6 @@
 
 ## 风险点
 
-- 各家媒体 API 参数差异很大，因此工具层保留 `input` 字段承载 provider 专属参数
+- ApiMart 不同模型参数差异较大，因此工具层保留 `input` 字段承载模型专属参数
 - 视频任务往往是异步的，因此当前以返回任务状态和 URL 为主
-- 图片和音频会写入本地磁盘，需要控制输出目录与清理策略
+- 音频会写入本地磁盘，需要控制输出目录与清理策略
