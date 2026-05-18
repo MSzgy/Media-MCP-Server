@@ -211,11 +211,12 @@ curl http://localhost:3333/health
 
 合入或 push 到 `main` 会触发 `.github/workflows/deploy.yml`：
 
-1. 构建 Docker 镜像
+1. 构建 `linux/arm64` Docker 镜像
 2. 推送到 GitHub Container Registry，镜像名为 `ghcr.io/<owner>/<repo>:<commit-sha>`，同时更新 `latest`
 3. SSH 登录服务器
 4. 拉取本次 commit 镜像
-5. 重建容器并映射主机端口 `3333` 到容器端口 `3333`
+5. 停掉占用主机端口 `3333` 的旧容器或进程
+6. 重建容器并映射主机端口 `3333` 到容器端口 `3333`
 
 需要在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 配置这些 Secrets：
 
@@ -233,7 +234,8 @@ curl http://localhost:3333/health
 
 - 已安装 Docker
 - `DEPLOY_USER` 可免密码执行 `sudo -i`
-- 主机端口 `3333` 未被其他进程占用
+- 服务器架构为 arm64，或 Docker 可运行 arm64 镜像
+- 如果主机端口 `3333` 已被占用，workflow 会先停止占用该端口的 Docker 容器或监听进程
 
 部署后的服务地址：
 

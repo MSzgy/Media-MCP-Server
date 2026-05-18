@@ -34,6 +34,11 @@ jobs:
           echo "IMAGE_SHA=${IMAGE_REPO}:${GITHUB_SHA}" >> "$GITHUB_ENV"
           echo "IMAGE_LATEST=${IMAGE_REPO}:latest" >> "$GITHUB_ENV"
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -48,6 +53,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/arm64
           push: true
           tags: |
             ${{ env.IMAGE_SHA }}
@@ -113,6 +119,20 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
           docker pull "$IMAGE_SHA"
           docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          PORT_CONTAINER_IDS="\$(docker ps --filter "publish=$HOST_PORT" -q || true)"
+          if [ -n "\$PORT_CONTAINER_IDS" ]; then
+            docker rm -f \$PORT_CONTAINER_IDS
+          fi
+          if command -v fuser >/dev/null 2>&1; then
+            fuser -k "${HOST_PORT}/tcp" || true
+          elif command -v lsof >/dev/null 2>&1; then
+            lsof -tiTCP:"$HOST_PORT" -sTCP:LISTEN | xargs -r kill -TERM || true
+          else
+            PIDS="\$(ss -ltnp "sport = :${HOST_PORT}" 2>/dev/null | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | sort -u || true)"
+            if [ -n "\$PIDS" ]; then
+              kill \$PIDS || true
+            fi
+          fi
           docker run -d \
             --name "$CONTAINER_NAME" \
             --restart unless-stopped \
