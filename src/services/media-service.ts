@@ -5,6 +5,7 @@ import {
   MediaCapability,
   MediaGenerationResult,
   MediaProvider,
+  UploadedImage,
   VideoGenerationParams
 } from "../providers/base.js";
 
@@ -31,6 +32,15 @@ export class MediaService {
   generateImage(params: ImageGenerationParams): Promise<MediaGenerationResult> {
     const provider = this.resolveProvider("image", params.provider);
     return provider.generateImage!(params);
+  }
+
+  uploadImage(providerName: string | undefined, filePath: string): Promise<UploadedImage> {
+    const provider = this.resolveProvider("image", providerName);
+    if (!provider.uploadImage) {
+      throw new Error(`Provider ${provider.name} does not support image uploads.`);
+    }
+
+    return provider.uploadImage(filePath);
   }
 
   generateVideo(params: VideoGenerationParams): Promise<MediaGenerationResult> {

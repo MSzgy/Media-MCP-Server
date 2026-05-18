@@ -1,3 +1,5 @@
+import path from "node:path";
+import { readFile, stat } from "node:fs/promises";
 import { AppEnv } from "../config/env.js";
 import { fetchJson, fetchBinary } from "../lib/http.js";
 import { saveBinaryArtifact, extensionFromContentType } from "../lib/files.js";
@@ -6,7 +8,9 @@ import {
   MediaProvider,
   ProviderAvailability,
   VideoGenerationParams,
-  AudioGenerationParams
+  AudioGenerationParams,
+  ImageGenerationParams,
+  MediaCapability
 } from "./base.js";
 
 /**
@@ -21,21 +25,45 @@ import {
  * | Kling v3   | kling-v3-omni              | image_urls, mode            |
  */
 export const APIMART_VIDEO_MODELS = [
-  "doubao-seedance-1-5-pro",
+  "doubao-seedance-2.0",
   "sora-2",
   "veo3.1-fast",
+  "veo3.1-fast-official",
+  "happyhorse-1.0",
+  "wan2.7",
+  "wan2.7-r2v",
+  "wan2.7-videoedit",
   "wan2.6",
-  "kling-v3-omni"
+  "wan2.6-i2v-flash",
+  "kling-v2-6",
+  "grok-imagine-1.0-video-apimart"
 ] as const;
 
-const DEFAULT_MODEL = "doubao-seedance-1-5-pro";
+export const APIMART_IMAGE_MODELS = [
+  "gemini-3.1-flash-image-preview",
+  "gemini-3-pro-image-preview",
+  "imagen-4.0-apimart",
+  "gpt-image-2",
+  "gpt-image-2-official",
+  "z-image-turbo",
+  "wan2.7-image-pro"
+] as const;
 
-interface ApiMartVideoResponse {
+const DEFAULT_VIDEO_MODEL = "doubao-seedance-2.0";
+const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
+
+interface ApiMartGenerationResponse {
   code: number;
   data: Array<{
     status: string;
     task_id: string;
-  }>;
+  }> | {
+    id?: string;
+    task_id?: string;
+    status?: string;
+    progress?: number;
+    [key: string]: unknown;
+  };
 }
 
 interface ApiMartTaskResponse {
@@ -57,6 +85,14 @@ interface ApiMartTaskResponse {
   };
 }
 
+interface ApiMartUploadImageResponse {
+  url: string;
+  filename: string;
+  content_type: string;
+  bytes: number;
+  created_at: number;
+}
+
 export class ApiMartVideoProvider implements MediaProvider {
   readonly name = "apimart";
   readonly capabilities = ["video", "image", "audio"] as const;
@@ -69,21 +105,107 @@ export class ApiMartVideoProvider implements MediaProvider {
       : { configured: false, missingEnv: ["APIMART_API_KEY"] };
   }
 
+  async uploadImage(filePath: string) {
+    const stats = await stat(filePath);
+    if (!stats.isFile()) {
+      throw new Error(`Not a file: ${filePath}`);
+    }
+    if (stats.size > 20 * 1024 * 1024) {
+      throw new Error("ApiMart image upload limit is 20MB.");
+    }
+
+    const filename = path.basename(filePath);
+    const contentType = contentTypeFromImagePath(filename);
+    if (!contentType) {
+      throw new Error("Unsupported image format. ApiMart supports JPEG, PNG, WebP, and GIF.");
+    }
+
+    const buffer = await readFile(filePath);
+    const formData = new FormData();
+    formData.append("file", new Blob([buffer], { type: contentType }), filename);
+
+    const response = await fetchJson<ApiMartUploadImageResponse>(
+      `${this.env.apiMartBaseUrl}/uploads/images`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`
+        },
+        body: formData,
+        timeoutMs: 120_000
+      }
+    );
+
+    return {
+      provider: this.name,
+      url: response.url,
+      filename: response.filename,
+      contentType: response.content_type,
+      bytes: response.bytes,
+      createdAt: response.created_at
+    };
+  }
+
   async generateVideo(params: VideoGenerationParams): Promise<MediaGenerationResult> {
-    const model = params.model ?? DEFAULT_MODEL;
+    const model = params.model ?? DEFAULT_VIDEO_MODEL;
     const extra = params.input ?? {};
 
     const body: Record<string, unknown> = {
-      model,
-      prompt: params.prompt,
+      ...(params.omitModel ? {} : { model }),
+      ...(params.prompt ? { prompt: params.prompt } : {}),
       ...(params.duration != null ? { duration: params.duration } : {}),
       ...(params.aspectRatio ? { aspect_ratio: params.aspectRatio } : {}),
+      ...(params.resolution ? { resolution: params.resolution } : {}),
+      ...(params.size ? { size: params.size } : {}),
+      ...(params.quality ? { quality: params.quality } : {}),
+      ...(params.mode ? { mode: params.mode } : {}),
       ...(params.image ? { image_urls: [params.image] } : {}),
+      ...(params.imageUrls ? { image_urls: params.imageUrls } : {}),
+      ...(params.imageWithRoles ? { image_with_roles: params.imageWithRoles } : {}),
+      ...(params.videoUrls ? { video_urls: params.videoUrls } : {}),
+      ...(params.audioUrls ? { audio_urls: params.audioUrls } : {}),
+      ...(params.audioUrl ? { audio_url: params.audioUrl } : {}),
+      ...(params.firstFrameImage ? { first_frame_image: params.firstFrameImage } : {}),
+      ...(params.lastFrameImage ? { last_frame_image: params.lastFrameImage } : {}),
+      ...(params.negativePrompt ? { negative_prompt: params.negativePrompt } : {}),
+      ...(params.seed != null ? { seed: params.seed } : {}),
+      ...(params.generateAudio != null ? { generate_audio: params.generateAudio } : {}),
+      ...(params.audio != null ? { audio: params.audio } : {}),
+      ...(params.returnLastFrame != null ? { return_last_frame: params.returnLastFrame } : {}),
+      ...(params.tools ? { tools: params.tools } : {}),
+      ...(params.generationType ? { generation_type: params.generationType } : {}),
+      ...(params.enableGif != null ? { enable_gif: params.enableGif } : {}),
+      ...(params.officialFallback != null ? { official_fallback: params.officialFallback } : {}),
+      ...(params.raw != null ? { raw: params.raw } : {}),
+      ...(params.sampleCount != null ? { sample_count: params.sampleCount } : {}),
+      ...(params.personGeneration ? { person_generation: params.personGeneration } : {}),
+      ...(params.resizeMode ? { resize_mode: params.resizeMode } : {}),
+      ...(params.enhancePrompt != null ? { enhance_prompt: params.enhancePrompt } : {}),
+      ...(params.promptExtend != null ? { prompt_extend: params.promptExtend } : {}),
+      ...(params.watermark != null ? { watermark: params.watermark } : {}),
+      ...(params.shotType ? { shot_type: params.shotType } : {}),
+      ...(params.template ? { template: params.template } : {}),
+      ...(params.videoUrl ? { video_url: params.videoUrl } : {}),
+      ...(params.metadata ? { metadata: params.metadata } : {}),
+      ...(params.audioSetting ? { audio_setting: params.audioSetting } : {}),
+      ...(params.callbackUrl ? { callback_url: params.callbackUrl } : {}),
+      ...(params.projectName ? { project_name: params.projectName } : {}),
+      ...(params.group ? { group: params.group } : {}),
+      ...(params.groupId ? { group_id: params.groupId } : {}),
+      ...(params.assetType ? { asset_type: params.assetType } : {}),
+      ...(params.assets ? { assets: params.assets } : {}),
+      ...(params.url ? { url: params.url } : {}),
+      ...(params.name ? { name: params.name } : {}),
+      ...(params.bytedToken ? { byted_token: params.bytedToken } : {}),
       ...extra
     };
 
-    const response = await fetchJson<ApiMartVideoResponse>(
-      `${this.env.apiMartBaseUrl}/videos/generations`,
+    const endpointPath = params.sourceTaskId
+      ? `/videos/${params.sourceTaskId}/remix`
+      : (params.endpointPath ?? "/videos/generations");
+
+    const response = await fetchJson<ApiMartGenerationResponse>(
+      `${this.env.apiMartBaseUrl}${endpointPath}`,
       {
         method: "POST",
         headers: {
@@ -94,15 +216,19 @@ export class ApiMartVideoProvider implements MediaProvider {
       }
     );
 
-    const first = response.data?.[0];
-    if (!first || !first.task_id) {
+    const first = (Array.isArray(response.data) ? response.data[0] : response.data) as {
+      id?: string;
+      task_id?: string;
+      status?: string;
+    } | undefined;
+    const taskId = first?.task_id ?? first?.id;
+    if (!first || !taskId) {
       throw new Error("No task_id returned from ApiMart");
     }
 
-    const taskId = first.task_id;
     const maxWaitMs = (params.waitSeconds ?? 30) * 1000; // default 30s wait limit
     const startMs = Date.now();
-    let taskStatus = first.status;
+    let taskStatus = first.status ?? "submitted";
     let finalUrl: string | undefined;
 
     // Poll the task endpoint
@@ -153,8 +279,8 @@ export class ApiMartVideoProvider implements MediaProvider {
     };
   }
 
-  async generateImage(params: import("./base.js").ImageGenerationParams): Promise<import("./base.js").MediaGenerationResult> {
-    const model = params.model ?? "gpt-4o-image";
+  async generateImage(params: ImageGenerationParams): Promise<MediaGenerationResult> {
+    const model = params.model ?? DEFAULT_IMAGE_MODEL;
     const extra = params.input ?? {};
 
     const body: Record<string, unknown> = {
@@ -163,10 +289,28 @@ export class ApiMartVideoProvider implements MediaProvider {
       ...(params.size ? { size: params.size } : {}),
       ...(params.count != null ? { n: params.count } : {}),
       ...(params.resolution ? { resolution: params.resolution } : {}),
+      ...(params.quality ? { quality: params.quality } : {}),
+      ...(params.background ? { background: params.background } : {}),
+      ...(params.moderation ? { moderation: params.moderation } : {}),
+      ...(params.outputFormat ? { output_format: params.outputFormat } : {}),
+      ...(params.outputCompression != null ? { output_compression: params.outputCompression } : {}),
+      ...(params.imageUrls ? { image_urls: params.imageUrls } : {}),
+      ...(params.maskUrl ? { mask_url: params.maskUrl } : {}),
+      ...(params.officialFallback != null ? { official_fallback: params.officialFallback } : {}),
+      ...(params.googleSearch != null ? { google_search: params.googleSearch } : {}),
+      ...(params.googleImageSearch != null ? { google_image_search: params.googleImageSearch } : {}),
+      ...(params.promptExtend != null ? { prompt_extend: params.promptExtend } : {}),
+      ...(params.negativePrompt ? { negative_prompt: params.negativePrompt } : {}),
+      ...(params.watermark != null ? { watermark: params.watermark } : {}),
+      ...(params.seed != null ? { seed: params.seed } : {}),
+      ...(params.thinkingMode != null ? { thinking_mode: params.thinkingMode } : {}),
+      ...(params.enableSequential != null ? { enable_sequential: params.enableSequential } : {}),
+      ...(params.bboxList ? { bbox_list: params.bboxList } : {}),
+      ...(params.colorPalette ? { color_palette: params.colorPalette } : {}),
       ...extra
     };
 
-    const response = await fetchJson<ApiMartVideoResponse>(
+    const response = await fetchJson<ApiMartGenerationResponse>(
       `${this.env.apiMartBaseUrl}/images/generations`,
       {
         method: "POST",
@@ -178,7 +322,8 @@ export class ApiMartVideoProvider implements MediaProvider {
       }
     );
 
-    const first = response.data?.[0];
+    const imageData = response.data as Array<{ status: string; task_id: string }> | undefined;
+    const first = imageData?.[0];
     if (!first || !first.task_id) {
       throw new Error("No task_id returned from ApiMart");
     }
@@ -291,7 +436,7 @@ export class ApiMartVideoProvider implements MediaProvider {
     };
   }
 
-  async checkTaskStatus(jobId: string): Promise<import("./base.js").MediaGenerationResult> {
+  async checkTaskStatus(jobId: string): Promise<MediaGenerationResult> {
     const pollResponse = await fetchJson<ApiMartTaskResponse>(
       `${this.env.apiMartBaseUrl}/tasks/${jobId}`,
       {
@@ -303,14 +448,17 @@ export class ApiMartVideoProvider implements MediaProvider {
 
     const taskStatus = pollResponse.data?.status ?? "unknown";
     let finalUrl: string | undefined;
+    let capability: MediaCapability = "video";
 
     if (taskStatus === "completed") {
       const result = pollResponse.data?.result as any;
       if (result?.videos && result.videos.length > 0 && result.videos[0].url && result.videos[0].url.length > 0) {
         finalUrl = result.videos[0].url[0];
       } else if (result?.images && result.images.length > 0 && result.images[0].url) {
+        capability = "image";
         finalUrl = Array.isArray(result.images[0].url) ? result.images[0].url[0] : result.images[0].url;
       } else if (result?.image_urls && result.image_urls.length > 0) {
+        capability = "image";
         finalUrl = result.image_urls[0];
       }
     }
@@ -319,7 +467,7 @@ export class ApiMartVideoProvider implements MediaProvider {
 
     return {
       provider: this.name,
-      capability: "video",
+      capability,
       status: taskStatus,
       jobId,
       assets,
@@ -329,5 +477,22 @@ export class ApiMartVideoProvider implements MediaProvider {
         estimatedTime: pollResponse.data?.estimated_time
       }
     };
+  }
+}
+
+function contentTypeFromImagePath(filePath: string): string | undefined {
+  const ext = path.extname(filePath).toLowerCase();
+  switch (ext) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    default:
+      return undefined;
   }
 }
