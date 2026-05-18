@@ -222,12 +222,18 @@ curl http://localhost:3333/health
 | Secret | 说明 |
 | --- | --- |
 | `DEPLOY_HOST` | 服务器 IP 或域名。 |
-| `DEPLOY_USER` | SSH 用户，需要能执行 Docker 命令。 |
+| `DEPLOY_USER` | SSH 用户，例如 `ubuntu`。workflow 会用该用户登录后执行 `sudo -i` 跑 Docker 部署命令。 |
 | `DEPLOY_SSH_KEY` | SSH 私钥内容。 |
 | `DEPLOY_PORT` | 可选，SSH 端口；不填默认 `22`。 |
 | `MCP_AUTH_TOKEN` | MCP HTTP 访问 token。客户端调用 `/mcp` 时用 `Authorization: Bearer <token>`。 |
 | `APIMART_API_KEY` | ApiMart API Key。 |
 | `APIMART_BASE_URL` | 可选，不填默认 `https://api.apimart.ai/v1`。 |
+
+服务器要求：
+
+- 已安装 Docker
+- `DEPLOY_USER` 可免密码执行 `sudo -i`
+- 主机端口 `3333` 未被其他进程占用
 
 部署后的服务地址：
 

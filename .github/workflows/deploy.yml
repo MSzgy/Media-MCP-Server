@@ -75,14 +75,14 @@ jobs:
         run: |
           test -n "$MCP_AUTH_TOKEN"
           test -n "$APIMART_API_KEY"
-          cat > media-mcp-server.env <<EOF
-          MCP_SERVER_NAME=media-mcp-server
-          MCP_PORT=${CONTAINER_PORT}
-          MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
-          MEDIA_OUTPUT_DIR=/app/outputs
-          APIMART_API_KEY=${APIMART_API_KEY}
-          APIMART_BASE_URL=${APIMART_BASE_URL}
-          EOF
+          {
+            printf 'MCP_SERVER_NAME=%s\n' 'media-mcp-server'
+            printf 'MCP_PORT=%s\n' "$CONTAINER_PORT"
+            printf 'MCP_AUTH_TOKEN=%s\n' "$MCP_AUTH_TOKEN"
+            printf 'MEDIA_OUTPUT_DIR=%s\n' '/app/outputs'
+            printf 'APIMART_API_KEY=%s\n' "$APIMART_API_KEY"
+            printf 'APIMART_BASE_URL=%s\n' "$APIMART_BASE_URL"
+          } > media-mcp-server.env
 
       - name: Copy runtime env to server
         env:
@@ -91,8 +91,14 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           test -n "$DEPLOY_USER"
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p /opt/media-mcp-server"
-          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" media-mcp-server.env "$DEPLOY_USER@$DEPLOY_HOST:/opt/media-mcp-server/.env"
+          REMOTE_ENV="/tmp/media-mcp-server.${GITHUB_RUN_ID}.env"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" media-mcp-server.env "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_ENV"
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "sudo -i bash -s" <<EOF
+          set -euo pipefail
+          mkdir -p /opt/media-mcp-server
+          mv "$REMOTE_ENV" /opt/media-mcp-server/.env
+          chmod 600 /opt/media-mcp-server/.env
+          EOF
 
       - name: Deploy container
         env:
@@ -102,11 +108,9 @@ jobs:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin"
-
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<EOF
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "sudo -i bash -s" <<EOF
           set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
           docker pull "$IMAGE_SHA"
           docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
           docker run -d \
