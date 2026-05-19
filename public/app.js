@@ -9,6 +9,8 @@ const state = {
   apiKeysLocked: false
 };
 
+const APIMART_TTS_VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+
 const $ = (id) => document.getElementById(id);
 
 function authHeaders() {
@@ -46,6 +48,12 @@ function modelDefaults(model) {
   return model?.defaults || {};
 }
 
+function isApiMartTtsModel(model = activeModel()) {
+  return model?.provider === "apimart"
+    && model?.capability === "audio"
+    && model?.model !== "whisper-1";
+}
+
 function numberValue(id) {
   const value = $(id).value.trim();
   return value === "" ? undefined : Number(value);
@@ -70,6 +78,27 @@ function setFieldValue(id, value) {
     return;
   }
   element.value = value == null ? "" : String(value);
+}
+
+function applyVoiceControl(defaultVoice) {
+  const useApiMartSelect = isApiMartTtsModel();
+  $("voiceIdSelect").classList.toggle("is-hidden", !useApiMartSelect);
+  $("voiceId").classList.toggle("is-hidden", useApiMartSelect);
+
+  if (useApiMartSelect) {
+    $("voiceIdSelect").value = APIMART_TTS_VOICES.includes(defaultVoice)
+      ? defaultVoice
+      : "alloy";
+    return;
+  }
+
+  setFieldValue("voiceId", defaultVoice);
+}
+
+function voiceValue() {
+  return isApiMartTtsModel()
+    ? stringValue("voiceIdSelect")
+    : stringValue("voiceId");
 }
 
 function populateModels() {
@@ -97,7 +126,7 @@ function applyModelDefaults() {
   setFieldValue("count", defaults.count);
   setFieldValue("personGeneration", defaults.personGeneration);
   setFieldValue("waitSeconds", defaults.waitSeconds);
-  setFieldValue("voiceId", defaults.voiceId);
+  applyVoiceControl(defaults.voiceId);
   setFieldValue("outputFormatAudio", defaults.outputFormat);
   setFieldValue("audioSpeed", defaults.speed);
 }
@@ -141,7 +170,7 @@ function buildGeneratePayload() {
 
   if (capability === "audio") {
     Object.assign(payload, {
-      voiceId: stringValue("voiceId"),
+      voiceId: voiceValue(),
       outputFormatAudio: stringValue("outputFormatAudio"),
       audioFilePath: stringValue("audioFilePath"),
       languageCode: stringValue("languageCode"),
