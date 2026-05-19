@@ -10,11 +10,24 @@ services:
       MCP_PORT: "3333"
       MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN}"
       MEDIA_OUTPUT_DIR: "/app/outputs"
+      MCP_TOOL_SETTINGS_PATH: "/app/config/.media-mcp-tools.json"
+      MCP_API_KEYS_PATH: "/app/config/.media-mcp-api-keys.json"
+      MCP_EXPOSED_TOOLS: "${MCP_EXPOSED_TOOLS:-}"
+      MCP_DISABLED_TOOLS: "${MCP_DISABLED_TOOLS:-}"
       APIMART_API_KEY: "${APIMART_API_KEY}"
       APIMART_BASE_URL: "${APIMART_BASE_URL:-https://api.apimart.ai/v1}"
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GOOGLE_API_KEYS: "${GOOGLE_API_KEYS:-}"
+      GOOGLE_IMAGE_MODEL: "${GOOGLE_IMAGE_MODEL:-gemini-3.1-flash-image-preview}"
+      GOOGLE_VIDEO_MODEL: "${GOOGLE_VIDEO_MODEL:-veo-3.1-generate-preview}"
+      GOOGLE_TTS_MODEL: "${GOOGLE_TTS_MODEL:-gemini-3.1-flash-tts-preview}"
+      GOOGLE_TTS_VOICE: "${GOOGLE_TTS_VOICE:-Kore}"
     volumes:
       - media_outputs:/app/outputs
+      - media_config:/app/config
     restart: unless-stopped
 
 volumes:
   media_outputs:
+  media_config:

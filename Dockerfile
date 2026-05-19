@@ -20,8 +20,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
+COPY public ./public
 
-RUN mkdir -p /app/outputs && chown -R node:node /app
+RUN mkdir -p /app/outputs /app/config && chown -R node:node /app
 USER node
 
 EXPOSE 3333
