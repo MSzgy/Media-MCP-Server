@@ -76,8 +76,17 @@ jobs:
       - name: Write runtime env file
         env:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          MCP_EXPOSED_TOOLS: ${{ secrets.MCP_EXPOSED_TOOLS }}
+          MCP_DISABLED_TOOLS: ${{ secrets.MCP_DISABLED_TOOLS }}
           APIMART_API_KEY: ${{ secrets.APIMART_API_KEY }}
           APIMART_BASE_URL: ${{ secrets.APIMART_BASE_URL || 'https://api.apimart.ai/v1' }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
+          GOOGLE_IMAGE_MODEL: ${{ secrets.GOOGLE_IMAGE_MODEL || 'gemini-3.1-flash-image-preview' }}
+          GOOGLE_VIDEO_MODEL: ${{ secrets.GOOGLE_VIDEO_MODEL || 'veo-3.1-generate-preview' }}
+          GOOGLE_TTS_MODEL: ${{ secrets.GOOGLE_TTS_MODEL || 'gemini-3.1-flash-tts-preview' }}
+          GOOGLE_TTS_VOICE: ${{ secrets.GOOGLE_TTS_VOICE || 'Kore' }}
         run: |
           test -n "$MCP_AUTH_TOKEN"
           test -n "$APIMART_API_KEY"
@@ -86,8 +95,19 @@ jobs:
             printf 'MCP_PORT=%s\n' "$CONTAINER_PORT"
             printf 'MCP_AUTH_TOKEN=%s\n' "$MCP_AUTH_TOKEN"
             printf 'MEDIA_OUTPUT_DIR=%s\n' '/app/outputs'
+            printf 'MCP_TOOL_SETTINGS_PATH=%s\n' '/app/config/.media-mcp-tools.json'
+            printf 'MCP_API_KEYS_PATH=%s\n' '/app/config/.media-mcp-api-keys.json'
+            printf 'MCP_EXPOSED_TOOLS=%s\n' "$MCP_EXPOSED_TOOLS"
+            printf 'MCP_DISABLED_TOOLS=%s\n' "$MCP_DISABLED_TOOLS"
             printf 'APIMART_API_KEY=%s\n' "$APIMART_API_KEY"
             printf 'APIMART_BASE_URL=%s\n' "$APIMART_BASE_URL"
+            printf 'GOOGLE_API_KEY=%s\n' "$GOOGLE_API_KEY"
+            printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY"
+            printf 'GOOGLE_API_KEYS=%s\n' "$GOOGLE_API_KEYS"
+            printf 'GOOGLE_IMAGE_MODEL=%s\n' "$GOOGLE_IMAGE_MODEL"
+            printf 'GOOGLE_VIDEO_MODEL=%s\n' "$GOOGLE_VIDEO_MODEL"
+            printf 'GOOGLE_TTS_MODEL=%s\n' "$GOOGLE_TTS_MODEL"
+            printf 'GOOGLE_TTS_VOICE=%s\n' "$GOOGLE_TTS_VOICE"
           } > media-mcp-server.env
 
       - name: Copy runtime env to server
@@ -139,6 +159,7 @@ jobs:
             --env-file /opt/media-mcp-server/.env \
             -p "$HOST_PORT:$CONTAINER_PORT" \
             -v media_mcp_outputs:/app/outputs \
+            -v media_mcp_config:/app/config \
             "$IMAGE_SHA"
           docker image prune -f
           EOF

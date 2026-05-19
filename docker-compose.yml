@@ -1,8 +1,6 @@
 services:
   media-mcp-server:
-    build:
-      context: .
-    image: media-mcp-server:local
+    image: "${MEDIA_MCP_IMAGE:-ghcr.io/mszgy/media-mcp-server:latest}"
     ports:
       - "${HOST_PORT:-3333}:3333"
     environment:

@@ -228,30 +228,32 @@ npm run dev
 
 ## Docker 部署
 
-构建镜像：
-
-```bash
-docker build -t media-mcp-server:local .
-```
+服务器部署只需要拉取已经由 GitHub Actions 构建并推送的镜像，不需要在服务器上执行 `docker build`。
 
 直接运行容器：
 
 ```bash
+docker pull ghcr.io/mszgy/media-mcp-server:latest
 docker run -d \
   --name media-mcp-server \
   -p 3333:3333 \
   -e MCP_AUTH_TOKEN=your_secret_token_here \
   -e APIMART_API_KEY=your_apimart_key \
   -e APIMART_BASE_URL=https://api.apimart.ai/v1 \
+  -e GOOGLE_API_KEY=your_google_api_key \
+  -e MCP_TOOL_SETTINGS_PATH=/app/config/.media-mcp-tools.json \
+  -e MCP_API_KEYS_PATH=/app/config/.media-mcp-api-keys.json \
   -v media_outputs:/app/outputs \
-  media-mcp-server:local
+  -v media_config:/app/config \
+  ghcr.io/mszgy/media-mcp-server:latest
 ```
 
 使用 compose：
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+MEDIA_MCP_IMAGE=ghcr.io/mszgy/media-mcp-server:latest docker compose pull
+MEDIA_MCP_IMAGE=ghcr.io/mszgy/media-mcp-server:latest docker compose up -d
 ```
 
 健康检查：
