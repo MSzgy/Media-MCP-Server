@@ -83,6 +83,8 @@ const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: "generate_video_apimart_kling_v2_6", title: "ApiMart Kling v2.6", provider: "apimart", capability: "video", model: "kling-v2.6" },
   { name: "generate_video_apimart_grok_imagine_1_0_video_apimart", title: "ApiMart Grok Imagine Video", provider: "apimart", capability: "video", model: "grok-imagine-1.0-video-apimart" },
   { name: "generate_video", title: "Generic video generator", provider: "multi", capability: "video" },
+  { name: "generate_audio_apimart_tts", title: "ApiMart TTS", provider: "apimart", capability: "audio", model: "gpt-4o-mini-tts" },
+  { name: "transcribe_audio_apimart_whisper_1", title: "ApiMart Whisper-1 Transcription", provider: "apimart", capability: "audio", model: "whisper-1" },
   { name: "generate_audio", title: "Generic audio generator", provider: "multi", capability: "audio" },
   { name: "check_task_status", title: "Check task status", provider: "multi", capability: "status" },
   { name: "check_apimart_balance", title: "Check ApiMart balance", provider: "apimart", capability: "status" }
@@ -100,8 +102,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
   { id: "apimart-image-gpt-image-2-official", title: "GPT Image 2 Official", provider: "apimart", capability: "image", model: "gpt-image-2-official", toolName: "generate_image_apimart_gpt_image_2_official" },
   { id: "apimart-image-z-image-turbo", title: "Z Image Turbo", provider: "apimart", capability: "image", model: "z-image-turbo", toolName: "generate_image_apimart_z_image_turbo", defaults: { count: 1 } },
   { id: "apimart-image-wan-2-7", title: "Wan2.7 Image Pro", provider: "apimart", capability: "image", model: "wan2.7-image-pro", toolName: "generate_image_apimart_wan2_7_image_pro" },
-  { id: "google-video-veo-3-1", title: "Veo 3.1 Generate Preview", provider: "google", capability: "video", model: "veo-3.1-generate-preview", defaults: { waitSeconds: 30 } },
-  { id: "google-video-veo-3-1-fast", title: "Veo 3.1 Fast Generate Preview", provider: "google", capability: "video", model: "veo-3.1-fast-generate-preview", defaults: { waitSeconds: 30 } },
+  { id: "google-video-veo-3-1", title: "Veo 3.1 Generate Preview", provider: "google", capability: "video", model: "veo-3.1-generate-preview", defaults: { waitSeconds: 300 } },
+  { id: "google-video-veo-3-1-fast", title: "Veo 3.1 Fast Generate Preview", provider: "google", capability: "video", model: "veo-3.1-fast-generate-preview", defaults: { waitSeconds: 300 } },
   { id: "apimart-video-sora-2", title: "Sora 2", provider: "apimart", capability: "video", model: "sora-2", toolName: "generate_video_apimart_sora_2" },
   { id: "apimart-video-veo-3-1-fast", title: "Veo 3.1 Fast", provider: "apimart", capability: "video", model: "veo3.1-fast", toolName: "generate_video_apimart_veo3_1_fast" },
   { id: "apimart-video-seedance-2", title: "Doubao Seedance 2.0", provider: "apimart", capability: "video", model: "doubao-seedance-2.0", toolName: "generate_video_apimart_doubao_seedance_2_0" },
@@ -109,7 +111,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
   { id: "apimart-video-wan-2-6", title: "Wan2.6", provider: "apimart", capability: "video", model: "wan2.6", toolName: "generate_video_apimart_wan2_6" },
   { id: "apimart-video-kling-2-6", title: "Kling v2.6", provider: "apimart", capability: "video", model: "kling-v2.6", toolName: "generate_video_apimart_kling_v2_6" },
   { id: "google-audio-tts", title: "Gemini Flash TTS", provider: "google", capability: "audio", model: "gemini-3.1-flash-tts-preview", defaults: { outputFormat: "wav", voiceId: "Kore" } },
-  { id: "apimart-audio-default", title: "ApiMart TTS", provider: "apimart", capability: "audio", model: "default" }
+  { id: "apimart-audio-tts", title: "ApiMart TTS", provider: "apimart", capability: "audio", model: "gpt-4o-mini-tts", toolName: "generate_audio_apimart_tts", defaults: { outputFormat: "wav", voiceId: "alloy", speed: 1 } },
+  { id: "apimart-audio-whisper-1", title: "Whisper-1 Transcription", provider: "apimart", capability: "audio", model: "whisper-1", toolName: "transcribe_audio_apimart_whisper_1", defaults: { outputFormat: "json" } }
 ];
 
 const TOOL_CATALOG_NAMES = new Set(TOOL_CATALOG.map((tool) => tool.name));
@@ -967,7 +970,7 @@ function createMcpServer() {
       image: z.string().optional().describe("URL of an initial image to animate (supported by some models)"),
       aspectRatio: z.string().optional().describe("Aspect ratio, e.g., '16:9', '9:16'"),
       duration: z.number().positive().optional().describe("Duration of the video in seconds"),
-      waitSeconds: z.number().int().min(5).max(600).optional(),
+      waitSeconds: z.number().int().min(0).max(300).optional(),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
     async (args) => {
@@ -981,15 +984,78 @@ function createMcpServer() {
   );
 
   server.tool(
-    "generate_audio",
-    "Generate audio/speech from text. Available providers: 'apimart' and 'google'. For google, TTS models include 'gemini-3.1-flash-tts-preview'; voiceId maps to Google's prebuilt voice name, for example 'Kore' or 'Puck'.",
+    "generate_audio_apimart_tts",
+    "Generate speech with ApiMart TTS. Calls POST /audio/speech and returns a saved audio file.",
     {
-      prompt: z.string().min(1).describe("The text to synthesize into speech"),
+      prompt: z.string().min(1).max(4096).describe("Text to convert to speech."),
+      model: z.string().optional().describe("TTS model. Defaults to gpt-4o-mini-tts."),
+      voiceId: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional().describe("ApiMart voice selection."),
+      outputFormat: z.enum(["wav", "opus", "aac", "flac", "pcm"]).optional().describe("Audio output format."),
+      speed: z.number().min(0.25).max(4).optional().describe("Playback speed from 0.25 to 4.0."),
+      input: z.record(z.unknown()).optional().describe("Extra ApiMart TTS request fields.")
+    },
+    async (args) => {
+      try {
+        return toToolResult(await mediaService.generateAudio({
+          provider: "apimart",
+          model: args.model,
+          prompt: args.prompt,
+          voiceId: args.voiceId,
+          outputFormat: args.outputFormat,
+          speed: args.speed,
+          input: args.input
+        }));
+      } catch (err: any) {
+        const msg = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+        return toToolResult(`Generation Failed: ${msg}`, true);
+      }
+    }
+  );
+
+  server.tool(
+    "transcribe_audio_apimart_whisper_1",
+    "Transcribe a local audio file with ApiMart Whisper-1. Supports mp3, mp4, mpeg, mpga, m4a, wav, and webm up to 25 MB.",
+    {
+      filePath: z.string().min(1).describe("Local audio file path to upload for transcription."),
+      languageCode: z.string().optional().describe("ISO-639-1 language code, e.g. en, zh, ja, ko."),
+      prompt: z.string().optional().describe("Optional transcription guidance prompt, maximum 224 tokens."),
+      responseFormat: z.enum(["json", "text", "srt", "verbose_json", "vtt"]).optional().describe("Transcription response format."),
+      temperature: z.number().min(0).max(1).optional().describe("Sampling temperature from 0 to 1."),
+      input: z.record(z.unknown()).optional().describe("Extra ApiMart transcription fields.")
+    },
+    async (args) => {
+      try {
+        return toToolResult(await mediaService.generateAudio({
+          provider: "apimart",
+          model: "whisper-1",
+          filePath: args.filePath,
+          languageCode: args.languageCode,
+          prompt: args.prompt,
+          responseFormat: args.responseFormat,
+          temperature: args.temperature,
+          input: args.input
+        }));
+      } catch (err: any) {
+        const msg = err.payload ? JSON.stringify(err.payload) : (err.message || String(err));
+        return toToolResult(`Transcription Failed: ${msg}`, true);
+      }
+    }
+  );
+
+  server.tool(
+    "generate_audio",
+    "Generate speech from text or transcribe audio. Available providers: 'apimart' and 'google'. For ApiMart Whisper transcription, set model='whisper-1' and filePath.",
+    {
+      prompt: z.string().optional().describe("Text to synthesize into speech, or optional transcription guidance for Whisper."),
       provider: z.string().optional().describe("The provider to use: 'apimart' or 'google'."),
       model: z.string().optional().describe("The TTS model to use"),
       voiceId: z.string().optional().describe("The voice ID to use (e.g., 'alloy' for apimart)"),
       outputFormat: z.string().optional().describe("Output format, e.g., 'mp3', 'opus'. For google, use 'wav' (default) or 'pcm'."),
       languageCode: z.string().optional(),
+      filePath: z.string().optional().describe("Local audio file path for Whisper transcription."),
+      responseFormat: z.string().optional().describe("Whisper response format: json, text, srt, verbose_json, or vtt."),
+      temperature: z.number().min(0).max(1).optional(),
+      speed: z.number().min(0.25).max(4).optional().describe("ApiMart TTS playback speed."),
       input: z.record(z.unknown()).optional().describe("Extra model-specific parameters")
     },
     async (args) => {
@@ -1072,7 +1138,7 @@ const uiGenerateSchema = z.object({
   capability: z.enum(["image", "video", "audio"]),
   provider: z.enum(["apimart", "google"]),
   model: z.string().optional(),
-  prompt: z.string().min(1),
+  prompt: z.string().optional(),
   aspectRatio: z.string().optional(),
   size: z.string().optional(),
   resolution: z.string().optional(),
@@ -1086,7 +1152,12 @@ const uiGenerateSchema = z.object({
   imageUrls: z.array(z.string()).optional(),
   voiceId: z.string().optional(),
   outputFormatAudio: z.string().optional(),
-  waitSeconds: z.number().int().min(0).max(600).optional(),
+  audioFilePath: z.string().optional(),
+  languageCode: z.string().optional(),
+  responseFormat: z.string().optional(),
+  temperature: z.number().min(0).max(1).optional(),
+  speed: z.number().min(0.25).max(4).optional(),
+  waitSeconds: z.number().int().min(0).max(300).optional(),
   input: z.record(z.unknown()).optional()
 });
 
@@ -1157,6 +1228,9 @@ async function generateFromUiRequest(body: z.infer<typeof uiGenerateSchema>) {
   const input = body.input ?? {};
 
   if (body.capability === "image") {
+    if (!body.prompt?.trim()) {
+      throw new Error("prompt is required for image generation.");
+    }
     const googleInput = body.provider === "google"
       ? compactObject({
         aspectRatio: body.aspectRatio,
@@ -1182,6 +1256,9 @@ async function generateFromUiRequest(body: z.infer<typeof uiGenerateSchema>) {
   }
 
   if (body.capability === "video") {
+    if (!body.prompt?.trim()) {
+      throw new Error("prompt is required for video generation.");
+    }
     return mediaService.generateVideo({
       provider: body.provider,
       model: body.model,
@@ -1203,6 +1280,11 @@ async function generateFromUiRequest(body: z.infer<typeof uiGenerateSchema>) {
     prompt: body.prompt,
     voiceId: body.voiceId,
     outputFormat: body.outputFormatAudio,
+    filePath: body.audioFilePath,
+    languageCode: body.languageCode,
+    responseFormat: body.responseFormat,
+    temperature: body.temperature,
+    speed: body.speed,
     input
   });
 }

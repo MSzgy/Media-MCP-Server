@@ -351,6 +351,46 @@ pre {
   gap: 4px;
 }
 
+.usage-stats {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.usage-summary,
+.usage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-summary {
+  color: var(--muted);
+}
+
+.usage-summary strong,
+.usage-row strong {
+  color: var(--ink);
+}
+
+.usage-models {
+  display: grid;
+  gap: 4px;
+}
+
+.usage-row {
+  color: #3f4945;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.usage-row span {
+  overflow-wrap: anywhere;
+}
+
 .delete-key {
   align-self: center;
   border-color: #e05454;

@@ -1,7 +1,8 @@
-import { ApiKeyStore } from "./api-keys-store.js";
+import { ApiKeyStore, ResolvedApiKey } from "./api-keys-store.js";
 
 export interface GoogleKeyResolver {
-  resolveApiKey(): string;
+  resolveApiKey(): ResolvedApiKey;
+  recordUsage(keyId: string, model: string): void;
   hasKey(): boolean;
 }
 
@@ -12,7 +13,11 @@ export class DefaultGoogleKeyResolver implements GoogleKeyResolver {
     return this.store.hasKey();
   }
 
-  resolveApiKey(): string {
+  resolveApiKey(): ResolvedApiKey {
     return this.store.resolveApiKey();
+  }
+
+  recordUsage(keyId: string, model: string): void {
+    this.store.recordUsage(keyId, model);
   }
 }

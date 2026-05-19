@@ -117,7 +117,7 @@
               </label>
               <label>
                 Wait Seconds
-                <input id="waitSeconds" type="number" min="0" max="600" placeholder="30" />
+                <input id="waitSeconds" type="number" min="0" max="300" placeholder="300" />
               </label>
               <label class="span-2">
                 Reference Image
@@ -132,7 +132,19 @@
               </label>
               <label>
                 Format
-                <input id="outputFormatAudio" placeholder="wav / pcm / mp3" />
+                <input id="outputFormatAudio" placeholder="wav / opus / aac / flac / pcm / json" />
+              </label>
+              <label>
+                Speed
+                <input id="audioSpeed" type="number" min="0.25" max="4" step="0.05" placeholder="1.0" />
+              </label>
+              <label>
+                Language
+                <input id="languageCode" placeholder="en / zh / ja / ko" />
+              </label>
+              <label class="span-2">
+                Audio File
+                <input id="audioFilePath" placeholder="/path/to/audio.mp3 for Whisper transcription" />
               </label>
             </div>
 

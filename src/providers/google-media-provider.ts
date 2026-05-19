@@ -36,6 +36,7 @@ import {
 const IMAGE_MODELS_USING_GENERATE_IMAGES = /^(models\/)?imagen-/i;
 const GEMINI_FLASH_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 const IMAGEN_FAST_MODEL = "models/imagen-4.0-fast-generate-001";
+const MAX_VIDEO_WAIT_SECONDS = 300;
 
 export class GoogleMediaProvider implements MediaProvider {
   readonly name = "google";
@@ -68,7 +69,8 @@ export class GoogleMediaProvider implements MediaProvider {
     params: ImageGenerationParams,
     model: string
   ): Promise<MediaGenerationResult> {
-    const response = await this.getClient().models.generateContentStream({
+    const client = this.getClientForUsage(model);
+    const response = await client.models.generateContentStream({
       model,
       contents: [
         {
@@ -129,22 +131,28 @@ export class GoogleMediaProvider implements MediaProvider {
 
   async generateVideo(params: VideoGenerationParams): Promise<MediaGenerationResult> {
     const model = params.model ?? this.env.googleVideoModel;
-    let operation = await this.getClient().models.generateVideos({
+    const client = this.getClientForUsage(model);
+    let operation = await client.models.generateVideos({
       model,
       prompt: params.prompt,
       ...(params.image ? { image: await loadImage(params.image) } : {}),
       config: buildVideoConfig(params)
     });
 
-    operation = await this.pollVideoOperation(operation, params.waitSeconds ?? 30);
-    return this.videoOperationToResult(operation, model);
+    operation = await this.pollVideoOperation(client, operation, normalizeWaitSeconds(params.waitSeconds, MAX_VIDEO_WAIT_SECONDS));
+    return this.videoOperationToResult(client, operation, model);
   }
 
   async generateAudio(params: AudioGenerationParams): Promise<MediaGenerationResult> {
     const model = params.model ?? this.env.googleTtsModel;
-    const response = await this.getClient().models.generateContent({
+    const prompt = params.prompt?.trim();
+    if (!prompt) {
+      throw new Error("prompt is required for Google TTS.");
+    }
+    const client = this.getClientForUsage(model);
+    const response = await client.models.generateContent({
       model,
-      contents: [{ parts: [{ text: params.prompt }] }],
+      contents: [{ parts: [{ text: prompt }] }],
       config: this.buildAudioConfig(params)
     });
 
@@ -223,15 +231,17 @@ export class GoogleMediaProvider implements MediaProvider {
     const operation = new GenerateVideosOperation();
     operation.name = jobId;
 
-    const latest = await this.getClient().operations.getVideosOperation({ operation });
-    return this.videoOperationToResult(latest);
+    const client = this.getClient();
+    const latest = await client.operations.getVideosOperation({ operation });
+    return this.videoOperationToResult(client, latest);
   }
 
   private async generateImagenImage(
     params: ImageGenerationParams,
     model: string
   ): Promise<MediaGenerationResult> {
-    const response = await this.getClient().models.generateImages({
+    const client = this.getClientForUsage(model);
+    const response = await client.models.generateImages({
       model,
       prompt: params.prompt,
       config: buildImagenConfig(params, model)
@@ -278,6 +288,7 @@ export class GoogleMediaProvider implements MediaProvider {
   }
 
   private async pollVideoOperation(
+    client: GoogleGenAI,
     operation: GenerateVideosOperation,
     waitSeconds: number
   ): Promise<GenerateVideosOperation> {
@@ -286,13 +297,14 @@ export class GoogleMediaProvider implements MediaProvider {
 
     while (!latest.done && Date.now() < deadline) {
       await delay(Math.min(10_000, deadline - Date.now()));
-      latest = await this.getClient().operations.getVideosOperation({ operation: latest });
+      latest = await client.operations.getVideosOperation({ operation: latest });
     }
 
     return latest;
   }
 
   private async videoOperationToResult(
+    client: GoogleGenAI,
     operation: GenerateVideosOperation,
     model?: string
   ): Promise<MediaGenerationResult> {
@@ -300,7 +312,7 @@ export class GoogleMediaProvider implements MediaProvider {
 
     if (operation.done && !operation.error) {
       for (const generatedVideo of operation.response?.generatedVideos ?? []) {
-        const asset = await this.saveVideo(generatedVideo.video);
+        const asset = await this.saveVideo(client, generatedVideo.video);
         if (asset) {
           assets.push(asset);
         }
@@ -325,7 +337,7 @@ export class GoogleMediaProvider implements MediaProvider {
     };
   }
 
-  private async saveVideo(video?: GoogleVideo): Promise<GeneratedAsset | undefined> {
+  private async saveVideo(client: GoogleGenAI, video?: GoogleVideo): Promise<GeneratedAsset | undefined> {
     if (!video) {
       return undefined;
     }
@@ -352,7 +364,7 @@ export class GoogleMediaProvider implements MediaProvider {
         prefix: "video",
         extension: extensionFromContentType(contentType, "mp4")
       });
-      await this.getClient().files.download({ file: video, downloadPath });
+      await client.files.download({ file: video, downloadPath });
       return {
         kind: "file",
         path: downloadPath,
@@ -406,10 +418,20 @@ export class GoogleMediaProvider implements MediaProvider {
 
   private getClient(): GoogleGenAI {
     const apiKey = this.keyResolver.resolveApiKey();
-    let client = this.clientCache.get(apiKey);
+    return this.getClientForRawKey(apiKey.rawKey);
+  }
+
+  private getClientForUsage(model: string): GoogleGenAI {
+    const apiKey = this.keyResolver.resolveApiKey();
+    this.keyResolver.recordUsage(apiKey.id, model);
+    return this.getClientForRawKey(apiKey.rawKey);
+  }
+
+  private getClientForRawKey(rawKey: string): GoogleGenAI {
+    let client = this.clientCache.get(rawKey);
     if (!client) {
-      client = new GoogleGenAI({ apiKey });
-      this.clientCache.set(apiKey, client);
+      client = new GoogleGenAI({ apiKey: rawKey });
+      this.clientCache.set(rawKey, client);
     }
     return client;
   }
@@ -632,6 +654,10 @@ function getBoolean(value: unknown): boolean | undefined {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeWaitSeconds(value: number | undefined, defaultValue: number): number {
+  return Math.max(0, Math.min(value ?? defaultValue, defaultValue));
 }
 
 function normalizePersonGeneration(value?: string): PersonGeneration | undefined {

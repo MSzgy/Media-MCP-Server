@@ -99,6 +99,7 @@ function applyModelDefaults() {
   setFieldValue("waitSeconds", defaults.waitSeconds);
   setFieldValue("voiceId", defaults.voiceId);
   setFieldValue("outputFormatAudio", defaults.outputFormat);
+  setFieldValue("audioSpeed", defaults.speed);
 }
 
 function buildGeneratePayload() {
@@ -141,7 +142,10 @@ function buildGeneratePayload() {
   if (capability === "audio") {
     Object.assign(payload, {
       voiceId: stringValue("voiceId"),
-      outputFormatAudio: stringValue("outputFormatAudio")
+      outputFormatAudio: stringValue("outputFormatAudio"),
+      audioFilePath: stringValue("audioFilePath"),
+      languageCode: stringValue("languageCode"),
+      speed: numberValue("audioSpeed")
     });
   }
 
@@ -260,6 +264,32 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function renderKeyUsageStats(stats = {}) {
+  const byModel = stats.byModel || {};
+  const modelRows = Object.entries(byModel)
+    .sort(([, a], [, b]) => b - a)
+    .map(([model, count]) => `
+      <div class="usage-row">
+        <span>${escapeHtml(model)}</span>
+        <strong>${count}</strong>
+      </div>
+    `)
+    .join("");
+
+  return `
+    <div class="usage-stats">
+      <div class="usage-summary">
+        <span>Total calls</span>
+        <strong>${stats.total || 0}</strong>
+      </div>
+      ${stats.lastUsedAt ? `<span class="tool-name">Last used ${escapeHtml(new Date(stats.lastUsedAt).toLocaleString())}</span>` : ""}
+      <div class="usage-models">
+        ${modelRows || '<span class="tool-name">No model usage yet</span>'}
+      </div>
+    </div>
+  `;
+}
+
 async function loadApiKeys() {
   const data = await api("/api/api-keys");
   state.apiKeys = data.keys;
@@ -270,7 +300,8 @@ async function loadApiKeys() {
 }
 
 function renderApiKeys() {
-  $("apiKeysStats").textContent = `${state.apiKeys.filter(k => k.enabled).length}/${state.apiKeys.length} keys enabled`;
+  const totalCalls = state.apiKeys.reduce((sum, key) => sum + (key.usageStats?.total || 0), 0);
+  $("apiKeysStats").textContent = `${state.apiKeys.filter(k => k.enabled).length}/${state.apiKeys.length} keys enabled · ${totalCalls} Google calls`;
   $("saveApiKeys").disabled = state.apiKeysLocked;
   $("addApiKey").disabled = state.apiKeysLocked;
   $("keySelectionMode").disabled = state.apiKeysLocked;
@@ -293,10 +324,12 @@ function renderApiKeys() {
         <span class="tool-name">${escapeHtml(key.maskedPreview)}</span>
         <span class="tool-meta">
           <span class="tag">${escapeHtml(key.source)}</span>
+          <span class="tag">${key.usageStats?.total || 0} calls</span>
           ${key.enabled
             ? '<span class="tag" style="background:var(--accent);color:var(--accent-ink)">Active</span>'
             : '<span class="tag">Disabled</span>'}
         </span>
+        ${renderKeyUsageStats(key.usageStats)}
       </div>
       ${key.source === 'ui' && !state.apiKeysLocked ? `
         <button class="delete-key" data-key-id="${escapeHtml(key.id)}" type="button">Remove</button>

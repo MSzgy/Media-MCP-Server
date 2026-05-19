@@ -51,6 +51,8 @@ export const APIMART_IMAGE_MODELS = [
 
 const DEFAULT_VIDEO_MODEL = "doubao-seedance-2.0";
 const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
+const MAX_VIDEO_WAIT_SECONDS = 300;
+const MAX_IMAGE_WAIT_SECONDS = 180;
 
 interface ApiMartGenerationResponse {
   code: number;
@@ -226,18 +228,19 @@ export class ApiMartVideoProvider implements MediaProvider {
       throw new Error("No task_id returned from ApiMart");
     }
 
-    const maxWaitMs = (params.waitSeconds ?? 30) * 1000; // default 30s wait limit
+    const maxWaitMs = normalizeWaitSeconds(params.waitSeconds, MAX_VIDEO_WAIT_SECONDS) * 1000;
     const startMs = Date.now();
     let taskStatus = first.status ?? "submitted";
     let finalUrl: string | undefined;
 
     // Poll the task endpoint
     while (taskStatus !== "completed" && taskStatus !== "failed") {
-      if (Date.now() - startMs > maxWaitMs) {
+      const remainingMs = maxWaitMs - (Date.now() - startMs);
+      if (remainingMs <= 0) {
         break; // timed out waiting
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 5000)); // poll every 5s
+      await new Promise((resolve) => setTimeout(resolve, Math.min(5000, remainingMs))); // poll every 5s
 
       let pollResponse: ApiMartTaskResponse | undefined;
       try {
@@ -329,17 +332,18 @@ export class ApiMartVideoProvider implements MediaProvider {
     }
 
     const taskId = first.task_id;
-    const maxWaitMs = 120 * 1000;
+    const maxWaitMs = MAX_IMAGE_WAIT_SECONDS * 1000;
     const startMs = Date.now();
     let taskStatus = first.status;
     let finalUrl: string | undefined;
 
     while (taskStatus !== "completed" && taskStatus !== "failed") {
-      if (Date.now() - startMs > maxWaitMs) {
+      const remainingMs = maxWaitMs - (Date.now() - startMs);
+      if (remainingMs <= 0) {
         break;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(5000, remainingMs)));
 
       let pollResponse: ApiMartTaskResponse | undefined;
       try {
@@ -385,14 +389,23 @@ export class ApiMartVideoProvider implements MediaProvider {
   }
 
   async generateAudio(params: AudioGenerationParams): Promise<MediaGenerationResult> {
+    if ((params.model ?? "").toLowerCase() === "whisper-1" || params.filePath) {
+      return this.transcribeAudio(params);
+    }
+
     const model = params.model ?? "gpt-4o-mini-tts";
     const extra = params.input ?? {};
+    const prompt = params.prompt?.trim();
+    if (!prompt) {
+      throw new Error("prompt is required for ApiMart TTS.");
+    }
 
     const body: Record<string, unknown> = {
       model,
-      input: params.prompt,
+      input: prompt,
       voice: params.voiceId ?? "alloy",
       ...(params.outputFormat ? { response_format: params.outputFormat } : {}),
+      ...(params.speed != null ? { speed: params.speed } : {}),
       ...extra
     };
 
@@ -431,7 +444,72 @@ export class ApiMartVideoProvider implements MediaProvider {
       ],
       metadata: {
         voiceId: params.voiceId ?? "alloy",
-        outputFormat: params.outputFormat
+        outputFormat: params.outputFormat,
+        speed: params.speed
+      }
+    };
+  }
+
+  async transcribeAudio(params: AudioGenerationParams): Promise<MediaGenerationResult> {
+    const model = params.model ?? "whisper-1";
+    const filePath = params.filePath ?? getString(params.input?.filePath);
+    if (!filePath) {
+      throw new Error("filePath is required for ApiMart Whisper transcription.");
+    }
+
+    const info = await stat(filePath);
+    if (info.size > 25 * 1024 * 1024) {
+      throw new Error("Audio file exceeds ApiMart Whisper 25 MB limit.");
+    }
+
+    const form = new FormData();
+    const file = await readFile(filePath);
+    form.set("file", new Blob([file], { type: contentTypeFromAudioPath(filePath) ?? "application/octet-stream" }), path.basename(filePath));
+    form.set("model", model);
+    const language = params.languageCode ?? getString(params.input?.language);
+    if (language) {
+      form.set("language", language);
+    }
+    if (params.prompt) {
+      form.set("prompt", params.prompt);
+    }
+    const responseFormat = params.responseFormat ?? params.outputFormat ?? getString(params.input?.responseFormat) ?? "json";
+    form.set("response_format", responseFormat);
+    const temperature = params.temperature ?? getNumber(params.input?.temperature);
+    if (temperature != null) {
+      form.set("temperature", String(temperature));
+    }
+
+    const response = await fetch(`${this.env.apiMartBaseUrl}/audio/transcriptions`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`
+      },
+      body: form,
+      signal: AbortSignal.timeout(120_000)
+    });
+
+    const text = await response.text();
+    const payload = responseFormat === "json" || responseFormat === "verbose_json"
+      ? safeParseJson(text) ?? { text }
+      : { text };
+
+    if (!response.ok) {
+      throw new Error(`ApiMart transcription failed with status ${response.status}: ${text}`);
+    }
+
+    return {
+      provider: this.name,
+      capability: "audio",
+      model,
+      status: "completed",
+      assets: [],
+      metadata: {
+        responseFormat,
+        language,
+        filePath,
+        bytes: info.size,
+        transcription: payload
       }
     };
   }
@@ -494,5 +572,47 @@ function contentTypeFromImagePath(filePath: string): string | undefined {
       return "image/gif";
     default:
       return undefined;
+  }
+}
+
+function contentTypeFromAudioPath(filePath: string): string | undefined {
+  const ext = path.extname(filePath).toLowerCase();
+  switch (ext) {
+    case ".mp3":
+      return "audio/mpeg";
+    case ".mp4":
+      return "audio/mp4";
+    case ".mpeg":
+      return "audio/mpeg";
+    case ".mpga":
+      return "audio/mpeg";
+    case ".m4a":
+      return "audio/mp4";
+    case ".wav":
+      return "audio/wav";
+    case ".webm":
+      return "audio/webm";
+    default:
+      return undefined;
+  }
+}
+
+function normalizeWaitSeconds(value: number | undefined, defaultValue: number): number {
+  return Math.max(0, Math.min(value ?? defaultValue, defaultValue));
+}
+
+function getString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function getNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+function safeParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }

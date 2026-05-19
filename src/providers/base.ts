@@ -122,12 +122,16 @@ export interface VideoGenerationParams {
 }
 
 export interface AudioGenerationParams {
-  prompt: string;
+  prompt?: string;
   provider?: string;
   model?: string;
   voiceId?: string;
   outputFormat?: string;
   languageCode?: string;
+  filePath?: string;
+  responseFormat?: string;
+  temperature?: number;
+  speed?: number;
   input?: Record<string, unknown>;
 }
 

@@ -10,6 +10,7 @@ services:
       MEDIA_OUTPUT_DIR: "/app/outputs"
       MCP_TOOL_SETTINGS_PATH: "/app/config/.media-mcp-tools.json"
       MCP_API_KEYS_PATH: "/app/config/.media-mcp-api-keys.json"
+      MCP_API_KEY_USAGE_STATS_PATH: "/app/config/.media-mcp-api-key-usage.json"
       MCP_EXPOSED_TOOLS: "${MCP_EXPOSED_TOOLS:-}"
       MCP_DISABLED_TOOLS: "${MCP_DISABLED_TOOLS:-}"
       APIMART_API_KEY: "${APIMART_API_KEY}"

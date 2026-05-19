@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -13,10 +13,23 @@ interface PersistedKey {
   enabled: boolean;
 }
 
+export interface ApiKeyUsageStats {
+  total: number;
+  byModel: Record<string, number>;
+  lastUsedAt?: string;
+}
+
 interface PersistedSettings {
   keys: PersistedKey[];
   selectionMode: SelectionMode;
   activeKeyId?: string;
+  /** @deprecated Usage stats moved to MCP_API_KEY_USAGE_STATS_PATH. Kept for one-time migration. */
+  usageStats?: Record<string, ApiKeyUsageStats>;
+  updatedAt: string;
+}
+
+interface PersistedUsageStats {
+  usageStats: Record<string, ApiKeyUsageStats>;
   updatedAt: string;
 }
 
@@ -26,6 +39,7 @@ export interface ApiKeyEntry {
   maskedPreview: string;
   source: KeySource;
   enabled: boolean;
+  usageStats: ApiKeyUsageStats;
 }
 
 export interface ApiKeyPayload {
@@ -34,8 +48,15 @@ export interface ApiKeyPayload {
   activeKeyId?: string;
   lockedByEnv: boolean;
   settingsPath: string;
+  usageStatsPath: string;
   totalCount: number;
   enabledCount: number;
+}
+
+export interface ResolvedApiKey {
+  id: string;
+  label: string;
+  rawKey: string;
 }
 
 const SETTINGS_PATH = path.resolve(
@@ -43,11 +64,29 @@ const SETTINGS_PATH = path.resolve(
   process.env.MCP_API_KEYS_PATH ?? ".media-mcp-api-keys.json"
 );
 
+const USAGE_STATS_PATH = path.resolve(
+  process.cwd(),
+  process.env.MCP_API_KEY_USAGE_STATS_PATH ?? ".media-mcp-api-key-usage.json"
+);
+
 function maskKey(key: string): string {
   if (key.length <= 8) {
     return `${key.slice(0, 4)}...`;
   }
   return `${key.slice(0, 4)}...${key.slice(-4)}`;
+}
+
+function stableKeyId(source: KeySource, key: string): string {
+  const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
+  return `${source}-${hash}`;
+}
+
+function normalizeUsageStats(stats?: ApiKeyUsageStats): ApiKeyUsageStats {
+  return {
+    total: stats?.total ?? 0,
+    byModel: stats?.byModel ?? {},
+    lastUsedAt: stats?.lastUsedAt
+  };
 }
 
 function readPersistedSettings(): PersistedSettings | undefined {
@@ -66,9 +105,30 @@ function writePersistedSettings(settings: PersistedSettings): void {
   writeFileSync(SETTINGS_PATH, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
 }
 
+function readPersistedUsageStats(): PersistedUsageStats | undefined {
+  if (!existsSync(USAGE_STATS_PATH)) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(readFileSync(USAGE_STATS_PATH, "utf8")) as PersistedUsageStats;
+  } catch {
+    return undefined;
+  }
+}
+
+function writePersistedUsageStats(usageStats: Record<string, ApiKeyUsageStats>): void {
+  mkdirSync(path.dirname(USAGE_STATS_PATH), { recursive: true });
+  writeFileSync(
+    USAGE_STATS_PATH,
+    `${JSON.stringify({ usageStats, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    "utf8"
+  );
+}
+
 export class ApiKeyStore {
   readonly lockedByEnv: boolean;
   private keys: PersistedKey[] = [];
+  private usageStats: Record<string, ApiKeyUsageStats> = {};
   private selectionMode: SelectionMode = "manual";
   private activeKeyId?: string;
   private roundRobinIndex = 0;
@@ -82,12 +142,17 @@ export class ApiKeyStore {
       : (envGoogleApiKey ? [envGoogleApiKey] : []);
 
     const persisted = readPersistedSettings();
+    const persistedUsage = readPersistedUsageStats();
+    this.usageStats = persistedUsage?.usageStats ?? persisted?.usageStats ?? {};
+    if (!persistedUsage && persisted?.usageStats) {
+      writePersistedUsageStats(this.usageStats);
+    }
     this.selectionMode = persisted?.selectionMode ?? "manual";
     this.activeKeyId = persisted?.activeKeyId;
 
     if (this.lockedByEnv) {
       this.keys = envKeys.map((key) => ({
-        id: randomUUID(),
+        id: stableKeyId("env", key),
         label: `env-key-${key.slice(0, 6)}`,
         rawKey: key,
         source: "env" as KeySource,
@@ -104,7 +169,7 @@ export class ApiKeyStore {
         );
         if (!existingEnv) {
           this.keys.unshift({
-            id: randomUUID(),
+            id: stableKeyId("env", envGoogleApiKey),
             label: `env-key-${envGoogleApiKey.slice(0, 6)}`,
             rawKey: envGoogleApiKey,
             source: "env",
@@ -129,18 +194,20 @@ export class ApiKeyStore {
         label: k.label,
         maskedPreview: maskKey(k.rawKey),
         source: k.source,
-        enabled: k.enabled
+        enabled: k.enabled,
+        usageStats: normalizeUsageStats(this.usageStats[k.id])
       })),
       selectionMode: this.selectionMode,
       activeKeyId: this.activeKeyId,
       lockedByEnv: this.lockedByEnv,
       settingsPath: SETTINGS_PATH,
+      usageStatsPath: USAGE_STATS_PATH,
       totalCount: this.keys.length,
       enabledCount: enabledKeys.length
     };
   }
 
-  resolveApiKey(): string {
+  resolveApiKey(): ResolvedApiKey {
     const enabled = this.keys.filter((k) => k.enabled);
     if (enabled.length === 0) {
       throw new Error("No enabled Google API keys configured.");
@@ -149,11 +216,34 @@ export class ApiKeyStore {
     if (this.selectionMode === "round-robin") {
       const key = enabled[this.roundRobinIndex % enabled.length];
       this.roundRobinIndex = (this.roundRobinIndex + 1) % enabled.length;
-      return key.rawKey;
+      return {
+        id: key.id,
+        label: key.label,
+        rawKey: key.rawKey
+      };
     }
 
     const selected = enabled.find((k) => k.id === this.activeKeyId) ?? enabled[0];
-    return selected.rawKey;
+    return {
+      id: selected.id,
+      label: selected.label,
+      rawKey: selected.rawKey
+    };
+  }
+
+  recordUsage(keyId: string, model: string): ApiKeyUsageStats {
+    const current = normalizeUsageStats(this.usageStats[keyId]);
+    const next = {
+      total: current.total + 1,
+      byModel: {
+        ...current.byModel,
+        [model]: (current.byModel[model] ?? 0) + 1
+      },
+      lastUsedAt: new Date().toISOString()
+    };
+    this.usageStats[keyId] = next;
+    this.persistUsageStats();
+    return next;
   }
 
   hasKey(): boolean {
@@ -196,6 +286,7 @@ export class ApiKeyStore {
       activeKeyId: this.activeKeyId,
       updatedAt: new Date().toISOString()
     });
+    this.persistUsageStats();
   }
 
   reload(): void {
@@ -205,8 +296,13 @@ export class ApiKeyStore {
     }
     const envKeys = this.keys.filter((k) => k.source === "env");
     this.keys = [...envKeys, ...persisted.keys.filter((k) => k.source === "ui")];
+    this.usageStats = readPersistedUsageStats()?.usageStats ?? persisted.usageStats ?? {};
     this.selectionMode = persisted.selectionMode;
     this.activeKeyId = persisted.activeKeyId;
     this.roundRobinIndex = 0;
+  }
+
+  private persistUsageStats(): void {
+    writePersistedUsageStats(this.usageStats);
   }
 }

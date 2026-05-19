@@ -37,6 +37,8 @@
 - `generate_video_apimart_kling_v2_6`
 - `generate_video_apimart_grok_imagine_1_0_video_apimart`
 - `generate_video`
+- `generate_audio_apimart_tts`
+- `transcribe_audio_apimart_whisper_1`
 - `generate_audio`
 - `check_task_status`
 - `check_apimart_balance`
@@ -61,7 +63,11 @@ UI 支持两类操作：
 | 配置 | 说明 |
 | --- | --- |
 | `.media-mcp-tools.json` | UI 保存的启用工具列表。默认被 `.gitignore` 忽略。 |
+| `.media-mcp-api-keys.json` | UI 保存的 Google API key 配置，包含 raw key，默认被 `.gitignore` 忽略，部署时应放在持久化配置卷里。 |
+| `.media-mcp-api-key-usage.json` | Google API key 使用统计，按 key id 记录总次数和模型次数，不包含 raw key，默认被 `.gitignore` 忽略。 |
 | `MCP_TOOL_SETTINGS_PATH` | 可选。自定义 UI 保存工具配置的路径。默认 `.media-mcp-tools.json`。 |
+| `MCP_API_KEYS_PATH` | 可选。自定义 Google API key 配置路径。默认 `.media-mcp-api-keys.json`。 |
+| `MCP_API_KEY_USAGE_STATS_PATH` | 可选。自定义 Google API key 使用统计路径。默认 `.media-mcp-api-key-usage.json`。 |
 | `MCP_EXPOSED_TOOLS` | 可选。逗号分隔 allowlist；设置后 UI 编辑会锁定。支持 `*` 或 `all` 表示全部。 |
 | `MCP_DISABLED_TOOLS` | 可选。逗号分隔 denylist，会在 UI/env allowlist 之后再过滤。 |
 
@@ -189,7 +195,7 @@ ApiMart 图片工具：
 | `audio` | `audio` | Wan/Kling 自动音频开关。 |
 | `promptExtend` | `prompt_extend` | Wan prompt 智能扩写。 |
 | `watermark` | `watermark` | 是否添加 AI watermark。 |
-| `waitSeconds` | 本地轮询 | 提交后最多轮询多少秒；设为 `0` 可立即返回任务 ID。 |
+| `waitSeconds` | 本地轮询 | 视频提交后最多轮询多少秒，上限 300；设为 `0` 可立即返回任务 ID。ApiMart 图片固定最多轮询 180 秒。 |
 | `input` | 透传 | 兜底扩展参数，最后合并进请求体。 |
 
 模型专属说明：
@@ -211,6 +217,26 @@ ApiMart 图片工具：
 | `generate_video_apimart_wan2_6_i2v_flash` | `imageUrls` 必填且只能 1 张；默认生成音频，可用 `audio=false` 静音。 |
 | `generate_video_apimart_kling_v2_6` | `mode=std` 为 720P 静音；`mode=pro` 支持 1080P 和自动音频；2 张图尾帧控制需要 pro。 |
 | `generate_video_apimart_grok_imagine_1_0_video_apimart` | `duration` 6-30；`quality` 支持 `480p`、`720p`；`imageUrls` 最多 7 张且不支持 base64。 |
+
+## 音频工具参数
+
+ApiMart 音频工具：
+
+| 工具 | 说明 |
+| --- | --- |
+| `generate_audio_apimart_tts` | 调用 `/audio/speech`，把文本转语音并保存为本地音频文件。支持 `model=gpt-4o-mini-tts`、`voiceId`、`outputFormat`、`speed`。 |
+| `transcribe_audio_apimart_whisper_1` | 调用 `/audio/transcriptions`，上传本地音频文件并返回转写文本或字幕。支持 `filePath`、`languageCode`、`prompt`、`responseFormat`、`temperature`。 |
+| `generate_audio` | 通用入口。ApiMart TTS 使用 `prompt`；Whisper 转写使用 `model=whisper-1` 和 `filePath`。 |
+
+ApiMart TTS 支持的常用值：
+
+| 参数 | 说明 |
+| --- | --- |
+| `voiceId` | `alloy`、`echo`、`fable`、`onyx`、`nova`、`shimmer`。 |
+| `outputFormat` | `wav`、`opus`、`aac`、`flac`、`pcm`。 |
+| `speed` | 语速，范围 `0.25` 到 `4.0`。 |
+
+Whisper 转写支持 `mp3`、`mp4`、`mpeg`、`mpga`、`m4a`、`wav`、`webm`，文件最大 25MB；`responseFormat` 可为 `json`、`text`、`srt`、`verbose_json`、`vtt`。
 
 ## 快速开始
 
@@ -243,6 +269,7 @@ docker run -d \
   -e GOOGLE_API_KEY=your_google_api_key \
   -e MCP_TOOL_SETTINGS_PATH=/app/config/.media-mcp-tools.json \
   -e MCP_API_KEYS_PATH=/app/config/.media-mcp-api-keys.json \
+  -e MCP_API_KEY_USAGE_STATS_PATH=/app/config/.media-mcp-api-key-usage.json \
   -v media_outputs:/app/outputs \
   -v media_config:/app/config \
   ghcr.io/mszgy/media-mcp-server:latest
@@ -330,7 +357,7 @@ Google provider 默认模型：
   "prompt": "A slow dolly shot of a glass greenhouse in rain",
   "aspectRatio": "16:9",
   "duration": 8,
-  "waitSeconds": 120
+  "waitSeconds": 300
 }
 ```
 
