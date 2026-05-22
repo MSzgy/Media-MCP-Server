@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import express, { Request, Response } from "express";
 import { appEnv } from "./config/env.js";
+import { ApiMartUsageStore } from "./config/apimart-usage-store.js";
 import { ApiKeyStore } from "./config/api-keys-store.js";
 import { DefaultGoogleKeyResolver } from "./config/google-key-resolver.js";
 import { ApiMartVideoProvider } from "./providers/apimart-video-provider.js";
@@ -18,11 +19,12 @@ const apiKeyStore = new ApiKeyStore(
   appEnv.googleApiKeys ?? [],
   appEnv.googleApiKey
 );
+const apiMartUsageStore = new ApiMartUsageStore();
 const googleKeyResolver = new DefaultGoogleKeyResolver(apiKeyStore);
 
 function createMediaService() {
   return new MediaService([
-    new ApiMartVideoProvider(appEnv),
+    new ApiMartVideoProvider(appEnv, apiMartUsageStore),
     new GoogleMediaProvider(appEnv, googleKeyResolver)
   ]);
 }
@@ -1101,6 +1103,13 @@ function createMcpServer() {
             "Authorization": `Bearer ${appEnv.apiMartApiKey}`
           }
         });
+        apiMartUsageStore.recordCall({
+          method: "GET",
+          endpoint: "/user/balance",
+          capability: "balance",
+          ok: response.ok,
+          statusCode: response.status
+        });
         if (!response.ok) {
           return toToolResult({ error: `ApiMart request failed with status ${response.status}` });
         }
@@ -1313,7 +1322,8 @@ app.get("/api/status", (_req: Request, res: Response) => {
     uiUrl: `http://localhost:${appEnv.mcpPort}/ui`,
     providers: createMediaService().listProviders(),
     toolExposure: getToolExposurePayload(),
-    apiKeys: apiKeyStore.getPayload()
+    apiKeys: apiKeyStore.getPayload(),
+    apiMartUsage: apiMartUsageStore.getPayload()
   });
 });
 
@@ -1348,6 +1358,14 @@ app.post("/api/tool-settings", (req: Request, res: Response) => {
 
 app.get("/api/api-keys", (_req: Request, res: Response) => {
   res.json(apiKeyStore.getPayload());
+});
+
+app.get("/api/apimart-usage", (_req: Request, res: Response) => {
+  res.json({
+    configured: Boolean(appEnv.apiMartApiKey),
+    baseUrl: appEnv.apiMartBaseUrl,
+    ...apiMartUsageStore.getPayload()
+  });
 });
 
 app.post("/api/api-keys", (req: Request, res: Response) => {

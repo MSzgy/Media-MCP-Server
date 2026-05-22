@@ -4,6 +4,7 @@ const state = {
   tools: [],
   visibleTools: [],
   apiKeys: [],
+  apiMartUsage: null,
   keySelectionMode: "manual",
   activeKeyId: null,
   apiKeysLocked: false
@@ -319,6 +320,70 @@ function renderKeyUsageStats(stats = {}) {
   `;
 }
 
+function formatDateTime(value) {
+  return value ? new Date(value).toLocaleString() : "Never";
+}
+
+function usageRows(entries, emptyText) {
+  const rows = Object.entries(entries || {})
+    .sort(([, a], [, b]) => b - a)
+    .map(([label, count]) => `
+      <div class="usage-row">
+        <span>${escapeHtml(label)}</span>
+        <strong>${count}</strong>
+      </div>
+    `)
+    .join("");
+  return rows || `<span class="tool-name">${emptyText}</span>`;
+}
+
+function renderApiMartUsage() {
+  const payload = state.apiMartUsage || {};
+  const stats = payload.usageStats || {};
+  const recentCalls = stats.recentCalls || [];
+  $("apimartUsageStats").textContent = `${stats.total || 0} API calls · ${stats.success || 0} success · ${stats.failed || 0} failed`;
+  $("apimartUsageNotice").textContent = payload.configured
+    ? `Base URL: ${payload.baseUrl}`
+    : "APIMART_API_KEY is not configured. Usage will appear after ApiMart calls are made.";
+
+  $("apimartUsageOverview").innerHTML = `
+    <article class="usage-card">
+      <span>Total</span>
+      <strong>${stats.total || 0}</strong>
+    </article>
+    <article class="usage-card">
+      <span>Success</span>
+      <strong>${stats.success || 0}</strong>
+    </article>
+    <article class="usage-card">
+      <span>Failed</span>
+      <strong>${stats.failed || 0}</strong>
+    </article>
+    <article class="usage-card">
+      <span>Last used</span>
+      <strong>${escapeHtml(formatDateTime(stats.lastUsedAt))}</strong>
+    </article>
+  `;
+  $("apimartModelUsage").innerHTML = usageRows(stats.byModel, "No model usage yet");
+  $("apimartEndpointUsage").innerHTML = usageRows(stats.byEndpoint, "No endpoint usage yet");
+  $("apimartRecentUsage").innerHTML = recentCalls.length
+    ? recentCalls.map((call) => `
+      <div class="usage-call">
+        <div>
+          <span class="tool-title">${escapeHtml(call.method)} ${escapeHtml(call.endpoint)}</span>
+          <span class="tool-name">${escapeHtml(call.model || call.capability)} · ${escapeHtml(formatDateTime(call.at))}</span>
+        </div>
+        <span class="tag ${call.ok ? "tag-success" : "tag-failed"}">${call.ok ? "OK" : "Failed"}${call.statusCode ? ` ${call.statusCode}` : ""}</span>
+      </div>
+    `).join("")
+    : '<span class="tool-name">No recent ApiMart calls</span>';
+}
+
+async function loadApiMartUsage() {
+  state.apiMartUsage = await api("/api/apimart-usage");
+  renderApiMartUsage();
+}
+
 async function loadApiKeys() {
   const data = await api("/api/api-keys");
   state.apiKeys = data.keys;
@@ -415,7 +480,7 @@ async function boot() {
       setStatus("Token required");
       return;
     }
-    await Promise.all([loadStatus(), loadModels(), loadToolSettings(), loadApiKeys()]);
+    await Promise.all([loadStatus(), loadModels(), loadToolSettings(), loadApiKeys(), loadApiMartUsage()]);
   } catch (error) {
     setStatus(error.message);
   }
@@ -502,6 +567,7 @@ $("submitKeyForm").addEventListener("click", () => {
 });
 
 $("saveApiKeys").addEventListener("click", saveApiKeysSettings);
+$("refreshApiMartUsage").addEventListener("click", loadApiMartUsage);
 
 $("apiKeyList").addEventListener("click", (event) => {
   if (event.target.classList.contains("delete-key")) {

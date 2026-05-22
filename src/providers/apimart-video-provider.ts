@@ -1,6 +1,7 @@
 import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { AppEnv } from "../config/env.js";
+import { ApiMartUsageStore } from "../config/apimart-usage-store.js";
 import { fetchJson, fetchBinary } from "../lib/http.js";
 import { saveBinaryArtifact, extensionFromContentType } from "../lib/files.js";
 import {
@@ -99,7 +100,10 @@ export class ApiMartVideoProvider implements MediaProvider {
   readonly name = "apimart";
   readonly capabilities = ["video", "image", "audio"] as const;
 
-  constructor(private readonly env: AppEnv) { }
+  constructor(
+    private readonly env: AppEnv,
+    private readonly usageStore?: ApiMartUsageStore
+  ) { }
 
   getAvailability(): ProviderAvailability {
     return this.env.apiMartApiKey
@@ -126,17 +130,13 @@ export class ApiMartVideoProvider implements MediaProvider {
     const formData = new FormData();
     formData.append("file", new Blob([buffer], { type: contentType }), filename);
 
-    const response = await fetchJson<ApiMartUploadImageResponse>(
-      `${this.env.apiMartBaseUrl}/uploads/images`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`
-        },
-        body: formData,
-        timeoutMs: 120_000
-      }
-    );
+    const response = await this.fetchJsonWithUsage<ApiMartUploadImageResponse>({
+      endpoint: "/uploads/images",
+      capability: "upload",
+      method: "POST",
+      body: formData,
+      timeoutMs: 120_000
+    });
 
     return {
       provider: this.name,
@@ -206,17 +206,14 @@ export class ApiMartVideoProvider implements MediaProvider {
       ? `/videos/${params.sourceTaskId}/remix`
       : (params.endpointPath ?? "/videos/generations");
 
-    const response = await fetchJson<ApiMartGenerationResponse>(
-      `${this.env.apiMartBaseUrl}${endpointPath}`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
-      }
-    );
+    const response = await this.fetchJsonWithUsage<ApiMartGenerationResponse>({
+      endpoint: endpointPath,
+      capability: "video",
+      model,
+      method: "POST",
+      body: JSON.stringify(body),
+      contentType: "application/json"
+    });
 
     const first = (Array.isArray(response.data) ? response.data[0] : response.data) as {
       id?: string;
@@ -244,14 +241,13 @@ export class ApiMartVideoProvider implements MediaProvider {
 
       let pollResponse: ApiMartTaskResponse | undefined;
       try {
-        pollResponse = await fetchJson<ApiMartTaskResponse>(
-          `${this.env.apiMartBaseUrl}/tasks/${taskId}`,
-          {
-            headers: {
-              "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
-            }
-          }
-        );
+        pollResponse = await this.fetchJsonWithUsage<ApiMartTaskResponse>({
+          endpoint: `/tasks/${taskId}`,
+          endpointGroup: "/tasks/:taskId",
+          capability: "status",
+          model,
+          method: "GET"
+        });
       } catch (pollErr: any) {
         console.warn(`[ApiMart Polling] Warning: fetch failed for task ${taskId}:`, pollErr.message, pollErr.cause);
         continue;
@@ -313,17 +309,14 @@ export class ApiMartVideoProvider implements MediaProvider {
       ...extra
     };
 
-    const response = await fetchJson<ApiMartGenerationResponse>(
-      `${this.env.apiMartBaseUrl}/images/generations`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
-      }
-    );
+    const response = await this.fetchJsonWithUsage<ApiMartGenerationResponse>({
+      endpoint: "/images/generations",
+      capability: "image",
+      model,
+      method: "POST",
+      body: JSON.stringify(body),
+      contentType: "application/json"
+    });
 
     const imageData = response.data as Array<{ status: string; task_id: string }> | undefined;
     const first = imageData?.[0];
@@ -347,14 +340,13 @@ export class ApiMartVideoProvider implements MediaProvider {
 
       let pollResponse: ApiMartTaskResponse | undefined;
       try {
-        pollResponse = await fetchJson<ApiMartTaskResponse>(
-          `${this.env.apiMartBaseUrl}/tasks/${taskId}`,
-          {
-            headers: {
-              "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
-            }
-          }
-        );
+        pollResponse = await this.fetchJsonWithUsage<ApiMartTaskResponse>({
+          endpoint: `/tasks/${taskId}`,
+          endpointGroup: "/tasks/:taskId",
+          capability: "status",
+          model,
+          method: "GET"
+        });
       } catch (pollErr: any) {
         console.warn(`[ApiMart Polling] Warning: fetch failed for task ${taskId}:`, pollErr.message, pollErr.cause);
         // On network failure or 5XX, wait 5s and try again without breaking the outer loop
@@ -409,18 +401,14 @@ export class ApiMartVideoProvider implements MediaProvider {
       ...extra
     };
 
-    const { buffer, contentType } = await fetchBinary(
-      `${this.env.apiMartBaseUrl}/audio/speech`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
-          "Content-Type": "application/json",
-          "Accept": "*/*"
-        },
-        body: JSON.stringify(body)
-      }
-    );
+    const { buffer, contentType } = await this.fetchBinaryWithUsage({
+      endpoint: "/audio/speech",
+      capability: "audio",
+      model,
+      method: "POST",
+      body: JSON.stringify(body),
+      contentType: "application/json"
+    });
 
     const artifact = await saveBinaryArtifact({
       outputDir: this.env.outputDir,
@@ -480,13 +468,13 @@ export class ApiMartVideoProvider implements MediaProvider {
       form.set("temperature", String(temperature));
     }
 
-    const response = await fetch(`${this.env.apiMartBaseUrl}/audio/transcriptions`, {
+    const response = await this.fetchWithUsage({
+      endpoint: "/audio/transcriptions",
+      capability: "audio",
+      model,
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`
-      },
       body: form,
-      signal: AbortSignal.timeout(120_000)
+      timeoutMs: 120_000
     });
 
     const text = await response.text();
@@ -515,14 +503,12 @@ export class ApiMartVideoProvider implements MediaProvider {
   }
 
   async checkTaskStatus(jobId: string): Promise<MediaGenerationResult> {
-    const pollResponse = await fetchJson<ApiMartTaskResponse>(
-      `${this.env.apiMartBaseUrl}/tasks/${jobId}`,
-      {
-        headers: {
-          "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`
-        }
-      }
-    );
+    const pollResponse = await this.fetchJsonWithUsage<ApiMartTaskResponse>({
+      endpoint: `/tasks/${jobId}`,
+      endpointGroup: "/tasks/:taskId",
+      capability: "status",
+      method: "GET"
+    });
 
     const taskStatus = pollResponse.data?.status ?? "unknown";
     let finalUrl: string | undefined;
@@ -555,6 +541,115 @@ export class ApiMartVideoProvider implements MediaProvider {
         estimatedTime: pollResponse.data?.estimated_time
       }
     };
+  }
+
+  private async fetchJsonWithUsage<T>(params: {
+    endpoint: string;
+    endpointGroup?: string;
+    capability: "image" | "video" | "audio" | "upload" | "status" | "balance";
+    model?: string;
+    method: "GET" | "POST";
+    body?: BodyInit;
+    contentType?: string;
+    timeoutMs?: number;
+  }): Promise<T> {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`
+    };
+    if (params.contentType) {
+      headers["Content-Type"] = params.contentType;
+    }
+
+    try {
+      const response = await fetchJson<T>(
+        `${this.env.apiMartBaseUrl}${params.endpoint}`,
+        {
+          method: params.method,
+          headers,
+          body: params.body,
+          timeoutMs: params.timeoutMs
+        }
+      );
+      this.recordUsage(params, true);
+      return response;
+    } catch (error) {
+      this.recordUsage(params, false);
+      throw error;
+    }
+  }
+
+  private async fetchBinaryWithUsage(params: {
+    endpoint: string;
+    capability: "audio";
+    model?: string;
+    method: "POST";
+    body?: BodyInit;
+    contentType?: string;
+  }) {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`,
+      "Accept": "*/*"
+    };
+    if (params.contentType) {
+      headers["Content-Type"] = params.contentType;
+    }
+
+    try {
+      const response = await fetchBinary(
+        `${this.env.apiMartBaseUrl}${params.endpoint}`,
+        {
+          method: params.method,
+          headers,
+          body: params.body
+        }
+      );
+      this.recordUsage(params, true);
+      return response;
+    } catch (error) {
+      this.recordUsage(params, false);
+      throw error;
+    }
+  }
+
+  private async fetchWithUsage(params: {
+    endpoint: string;
+    capability: "audio";
+    model?: string;
+    method: "POST";
+    body?: BodyInit;
+    timeoutMs: number;
+  }) {
+    const response = await fetch(`${this.env.apiMartBaseUrl}${params.endpoint}`, {
+      method: params.method,
+      headers: {
+        "Authorization": `Bearer ${this.env.apiMartApiKey ?? ""}`
+      },
+      body: params.body,
+      signal: AbortSignal.timeout(params.timeoutMs)
+    });
+    this.recordUsage(params, response.ok, response.status);
+    return response;
+  }
+
+  private recordUsage(
+    params: {
+      endpoint: string;
+      endpointGroup?: string;
+      capability: "image" | "video" | "audio" | "upload" | "status" | "balance";
+      model?: string;
+      method: string;
+    },
+    ok: boolean,
+    statusCode?: number
+  ) {
+    this.usageStore?.recordCall({
+      method: params.method,
+      endpoint: params.endpointGroup ?? params.endpoint,
+      capability: params.capability,
+      model: params.model,
+      ok,
+      statusCode
+    });
   }
 }
 

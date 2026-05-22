@@ -24,6 +24,7 @@
         <button class="tab is-active" type="button" data-tab="generate">Generate</button>
         <button class="tab" type="button" data-tab="tools">Tool Exposure</button>
         <button class="tab" type="button" data-tab="apiKeys">API Keys</button>
+        <button class="tab" type="button" data-tab="apimartUsage">ApiMart Usage</button>
       </nav>
 
       <section id="generatePanel" class="panel is-active">
@@ -226,6 +227,34 @@
           <button id="submitKeyForm" type="button">Add</button>
           <button id="cancelKeyForm" type="button">Cancel</button>
         </div>
+      </section>
+
+      <section id="apimartUsagePanel" class="panel">
+        <div class="tool-toolbar">
+          <div>
+            <h2>ApiMart API Usage</h2>
+            <p id="apimartUsageStats">Loading</p>
+          </div>
+          <div class="tool-actions">
+            <button id="refreshApiMartUsage" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="apimartUsageNotice" class="notice"></div>
+        <div class="usage-overview" id="apimartUsageOverview"></div>
+        <div class="usage-columns">
+          <section>
+            <h2>By Model</h2>
+            <div class="usage-table" id="apimartModelUsage"></div>
+          </section>
+          <section>
+            <h2>By Endpoint</h2>
+            <div class="usage-table" id="apimartEndpointUsage"></div>
+          </section>
+        </div>
+        <section class="recent-usage">
+          <h2>Recent Calls</h2>
+          <div class="usage-table" id="apimartRecentUsage"></div>
+        </section>
       </section>
     </main>
 
